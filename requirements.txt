@@ -1,0 +1,2 @@
+# TMExpert deliberately uses the Python standard library only.
+# The Excel storage engine writes OOXML workbooks directly; no database dependency exists.

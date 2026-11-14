@@ -1,0 +1,5 @@
+__pycache__/
+*.py[cod]
+application-data/
+tmexpert-server*.log
+_baseline/

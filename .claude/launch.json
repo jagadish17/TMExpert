@@ -1,0 +1,13 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "tmexpert-preview",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-u", "server.py"],
+      "port": 8799,
+      "autoPort": false,
+      "env": { "TMEXPERT_PORT": "8799", "TMEXPERT_DATA_DIR": "D:/tmp/tmexpert/preview-data", "TEMP": "D:/tmp/tmexpert", "TMP": "D:/tmp/tmexpert" }
+    }
+  ]
+}
