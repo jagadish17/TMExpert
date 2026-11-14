@@ -19,17 +19,17 @@ DATA = Path(os.getenv("TMEXPERT_DATA_DIR") or ROOT / "application-data")
 SESSION_COOKIE = "tmx_session"
 
 
-def resolve_port(value: str | None = None) -> int:
+def resolve_port(value: str | None = None, host: str = "127.0.0.1") -> int:
     requested = int(value if value is not None else os.getenv("TMEXPERT_PORT", "8787"))
     if requested == 0:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.bind(("127.0.0.1", 0))
+            sock.bind((host, 0))
             return int(sock.getsockname()[1])
 
     for candidate in [requested, *range(requested + 1, requested + 20)]:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.bind(("127.0.0.1", candidate))
+                sock.bind((host, candidate))
                 return candidate
         except OSError:
             continue
@@ -259,6 +259,13 @@ class Handler(SimpleHTTPRequestHandler):
             self._require(user, "reports.export")
             blob, filename = self.app.reports.export(parts[1][:-5], query.get("project_id", ""), filters, store.root / "temp")
             return self._download(blob, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", filename)
+        if len(parts) == 3 and parts[0] == "test-cases" and parts[2] == "cycle-history":
+            self._require(user, "execution.read")
+            case = store.get("test_cases", parts[1])
+            if not case: raise KeyError("Test case not found")
+            return self._json(200, self.app.comparison.case_history(case["project_id"], parts[1], self.app.execution))
+        if len(parts) == 3 and parts[0] == "cycles" and parts[2] == "timeline":
+            self._require(user, "cycles.read"); return self._json(200, self.app.comparison.cycle_timeline(parts[1]))
         if route in {"/api/comparison", "/api/comparison/export.xlsx"}:
             self._require(user, "cycles.read")
             ids = [item for item in query.get("cycle_ids", "").split(",") if item]
@@ -350,7 +357,7 @@ class Handler(SimpleHTTPRequestHandler):
         if route == "/api/auth/login":
             body = self._body()
             token, user = auth.login(body.get("email"), body.get("password"))
-            cookie = f"{SESSION_COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/"
+            cookie = f"{SESSION_COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/" + ("; Secure" if getattr(self.server, "tls", False) else "")
             return self._json(200, self._session_payload(user), {"Set-Cookie": cookie})
         if route == "/api/auth/logout":
             auth.logout(self._token())
@@ -514,15 +521,68 @@ class Handler(SimpleHTTPRequestHandler):
         self._send(200, target.read_bytes(), mimetypes.guess_type(str(target))[0] or "application/octet-stream")
 
 
-def make_server(host: str, port: int, data_dir: str | Path = DATA) -> ThreadingHTTPServer:
+def make_server(host: str, port: int, data_dir: str | Path = DATA, cert: str = "", key: str = "") -> ThreadingHTTPServer:
     server = ThreadingHTTPServer((host, port), Handler)
     server.app = App(data_dir)  # type: ignore[attr-defined]
+    server.tls = False  # type: ignore[attr-defined]
+    if cert and key:  # optional HTTPS with your own certificate
+        import ssl
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.load_cert_chain(cert, key)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+        server.tls = True  # type: ignore[attr-defined]
     return server
 
 
+def is_local_only(host: str) -> bool:
+    return host in {"127.0.0.1", "localhost", "::1"}
+
+
+def accounts_with_default_password(app: "App") -> list[str]:
+    """Active accounts that still use the shipped default password (unsafe on a network)."""
+    from app.auth import verify_password
+    return [u.get("email", "") for u in app.store.list("users", page_size=1_000_000)["items"]
+            if u.get("status") == "Active" and verify_password("change-me", u.get("password_hash", ""))]
+
+
+def network_addresses() -> list[str]:
+    """IPv4 addresses teammates can use to reach this computer."""
+    found: list[str] = []
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:  # no packet is sent
+            probe.connect(("10.255.255.255", 1)); found.append(probe.getsockname()[0])
+    except OSError:
+        pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            address = info[4][0]
+            if address not in found and not address.startswith(("127.", "169.254.")): found.append(address)
+    except OSError:
+        pass
+    return [a for a in found if not a.startswith("127.")]
+
+
 if __name__ == "__main__":
-    host = resolve_host(); port = resolve_port(os.getenv("TMEXPERT_PORT"))
-    httpd = make_server(host, port)
-    shown = "127.0.0.1" if host in {"0.0.0.0", ""} else host
-    print(f"TMExpert ready at http://{shown}:{port}" + (" (shared on all network interfaces)" if host == "0.0.0.0" else ""))
+    host = resolve_host()
+    cert, key = os.getenv("TMEXPERT_CERT", ""), os.getenv("TMEXPERT_KEY", "")
+    port = resolve_port(os.getenv("TMEXPERT_PORT"), "127.0.0.1" if is_local_only(host) else host)
+    httpd = make_server(host, port, DATA, cert, key)
+    scheme = "https" if httpd.tls else "http"  # type: ignore[attr-defined]
+    if not is_local_only(host):
+        unsafe = accounts_with_default_password(httpd.app)  # type: ignore[attr-defined]
+        if unsafe:
+            httpd.server_close()
+            print("TMExpert was NOT shared on the network.")
+            print("These accounts still use the default password 'change-me':", ", ".join(unsafe))
+            print("Start TMExpert normally (Start-TMExpert.cmd), sign in as each of them, set a new password, then share again.")
+            raise SystemExit(2)
+    print(f"TMExpert ready at {scheme}://127.0.0.1:{port}  (on this computer)")
+    if not is_local_only(host):
+        addresses = network_addresses()
+        for address in addresses:
+            print(f"Team link: {scheme}://{address}:{port}")
+        if not addresses: print("No network address found; check the network connection.")
+        if scheme == "http":
+            print("Note: shared over plain HTTP. Use this only on a trusted office network or VPN.")
     httpd.serve_forever()

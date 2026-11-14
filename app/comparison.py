@@ -63,7 +63,13 @@ class ComparisonService:
         cycle_ids = cycle_ids or self.default_cycle_ids(project_id)
         cycles = self._ordered_cycles(project_id, cycle_ids)
         ids = [c["id"] for c in cycles]
-        previous_id = previous_id or ids[-2]
+        runs_by_cycle = {c["id"]: self.store.list("test_runs", filters={"cycle_id": c["id"]}, page_size=1_000_000)["items"] for c in cycles}
+        with_results = [cid for cid in ids if any((r.get("status") or "Not Run") in EXECUTED for r in runs_by_cycle[cid])]
+        if not previous_id and not current_id:
+            # Default: the two latest selected cycles that have results (comparing an empty cycle says nothing).
+            pair = with_results[-2:] if len(with_results) >= 2 else ids[-2:]
+            previous_id, current_id = pair[0], pair[1]
+        previous_id = previous_id or (ids[-2] if current_id != ids[-2] else ids[-1])
         current_id = current_id or ids[-1]
         if previous_id not in ids or current_id not in ids or previous_id == current_id:
             raise ValueError("Choose two different selected cycles as previous and current")
@@ -72,7 +78,7 @@ class ComparisonService:
         cases = {c["id"]: c for c in self.store.list("test_cases", filters={"project_id": project_id}, page_size=1_000_000, include_archived=True)["items"]}
         rows: dict[str, dict[str, Any]] = {}
         for cycle in cycles:
-            for run in self.store.list("test_runs", filters={"cycle_id": cycle["id"]}, page_size=1_000_000)["items"]:
+            for run in runs_by_cycle[cycle["id"]]:
                 case_id = run.get("test_case_id", "")
                 row = rows.setdefault(case_id, {"test_case_id": case_id, "cells": {}})
                 row["cells"][cycle["id"]] = {
@@ -99,7 +105,7 @@ class ComparisonService:
             modified += "modified" in row["flags"]
             reopened += "reopened" in row["flags"]
         return {
-            "cycles": [{k: c.get(k, "") for k in ("id", "name", "testing_type", "status", "start_date", "end_date", "build", "environment", "created_at")} for c in cycles],
+            "cycles": [{**{k: c.get(k, "") for k in ("id", "name", "testing_type", "status", "start_date", "end_date", "build", "environment", "created_at")}, "has_results": c["id"] in with_results} for c in cycles],
             "previous_id": previous_id, "current_id": current_id, "rows": result_rows,
             "summary": summary, "modified": modified, "reopened": reopened, "labels": CATEGORIES,
             "trend": [self._cycle_stats(c, rows) for c in cycles],
@@ -176,3 +182,71 @@ class ComparisonService:
             return path.read_bytes()
         finally:
             path.unlink(missing_ok=True)
+
+    # ------------------------------------------------------------- histories
+    def case_history(self, project_id: str, case_id: str, execution: Any) -> dict[str, Any]:
+        """One test case in every cycle of the project: result, version, people, evidence and attempts."""
+        case = self.store.get("test_cases", case_id)
+        if not case or case.get("project_id") != project_id: raise KeyError("Test case not found")
+        names = {u["id"]: u.get("name", "") for u in self.store.list("users", page_size=1_000_000, include_archived=True)["items"]}
+        cycles = {c["id"]: c for c in self.store.list("test_cycles", filters={"project_id": project_id}, page_size=1_000_000, include_archived=True)["items"]}
+        runs = [r for r in self.store.list("test_runs", filters={"test_case_id": case_id}, page_size=1_000_000, include_archived=True)["items"] if r.get("cycle_id") in cycles]
+        order = lambda r: (str(cycles[r["cycle_id"]].get("start_date") or "") or str(cycles[r["cycle_id"]].get("created_at") or "")[:10], str(cycles[r["cycle_id"]].get("created_at") or ""))
+        entries = []
+        for run in sorted(runs, key=order, reverse=True):
+            cycle = cycles[run["cycle_id"]]
+            attempts = execution.history(run["id"])
+            entries.append({
+                "run_id": run["id"], "cycle_id": cycle["id"], "cycle_name": cycle.get("name", ""), "cycle_status": cycle.get("status", ""),
+                "cycle_date": str(cycle.get("start_date") or "") or str(cycle.get("created_at") or "")[:10], "testing_type": cycle.get("testing_type", ""),
+                "environment": run.get("environment") or cycle.get("environment", ""), "build": run.get("build") or cycle.get("build", ""),
+                "status": run.get("status") or "Not Run", "version": str(run.get("test_case_version") or ""), "title": run.get("case_title") or case.get("title", ""),
+                "module_path": run.get("module_path", ""), "assignee_name": names.get(run.get("assignee_id", ""), ""), "executed_by_name": names.get(run.get("executed_by", ""), ""),
+                "executed_at": run.get("executed_at", ""), "actual_result": run.get("actual_result", ""), "notes": run.get("execution_notes", ""),
+                "defect_ids": run.get("defect_ids") or [], "attempt_count": run.get("attempt_count") or "0", "archived": run.get("archived") is True,
+                "attempts": attempts, "evidence": [a for attempt in attempts for a in attempt.get("attachments", [])],
+            })
+        executed = [e for e in entries if e["status"] in EXECUTED]
+        return {"case": {k: case.get(k, "") for k in ("id", "case_key", "title", "version", "status", "priority")}, "cycles": entries,
+                "summary": {"cycles": len(entries), "executed": len(executed), "passed": sum(e["status"] == "Passed" for e in executed),
+                            "failed": sum(e["status"] == "Failed" for e in executed), "blocked": sum(e["status"] == "Blocked" for e in executed),
+                            "defects": sorted({d for e in entries for d in (e["defect_ids"] if isinstance(e["defect_ids"], list) else [])})}}
+
+    def cycle_timeline(self, cycle_id: str, limit: int = 500) -> dict[str, Any]:
+        """Everything recorded in a cycle, newest first: results (every attempt) and assignment changes."""
+        cycle = self.store.get("test_cycles", cycle_id)
+        if not cycle: raise KeyError("Cycle not found")
+        names = {u["id"]: u.get("name", "") for u in self.store.list("users", page_size=1_000_000, include_archived=True)["items"]}
+        runs = {r["id"]: r for r in self.store.list("test_runs", filters={"cycle_id": cycle_id}, page_size=1_000_000, include_archived=True)["items"]}
+        cases = {c["id"]: c for c in self.store.list("test_cases", filters={"project_id": cycle.get("project_id", "")}, page_size=1_000_000, include_archived=True)["items"]}
+        for run in runs.values():  # runs created before snapshots: take ID/title from the repository
+            case = cases.get(run.get("test_case_id", ""), {})
+            run.setdefault("case_key", ""); run.setdefault("case_title", "")
+            if not run["case_key"]: run["case_key"] = case.get("case_key", "")
+            if not run["case_title"]: run["case_title"] = case.get("title", "")
+        events = []
+        for entry in self.store.list("execution_history", filters={"cycle_id": cycle_id}, page_size=1_000_000)["items"]:
+            run = runs.get(entry.get("test_run_id"), {})
+            events.append({"kind": "result", "at": entry.get("executed_at", ""), "run_id": entry.get("test_run_id", ""), "case_id": run.get("test_case_id", ""),
+                           "case_key": run.get("case_key") or entry.get("case_key", ""), "title": run.get("case_title", ""), "status": entry.get("status", ""),
+                           "previous_status": entry.get("previous_status", ""), "attempt": entry.get("attempt", ""), "actual_result": entry.get("actual_result", ""),
+                           "notes": entry.get("notes", ""), "defect_ids": entry.get("defect_ids") or [], "by": names.get(entry.get("executed_by", ""), "") or "System",
+                           "source": entry.get("source", "")})
+        for entry in self.store.list("assignment_history", filters={"cycle_id": cycle_id}, page_size=1_000_000)["items"]:
+            run = runs.get(entry.get("test_run_id"), {})
+            events.append({"kind": "assignment", "at": entry.get("created_at", ""), "run_id": entry.get("test_run_id", ""), "case_id": run.get("test_case_id", ""),
+                           "case_key": entry.get("case_key") or run.get("case_key", ""), "title": run.get("case_title", ""),
+                           "from": names.get(entry.get("from_assignee_id", ""), "") or "Unassigned", "to": names.get(entry.get("to_assignee_id", ""), "") or "Unassigned",
+                           "reason": entry.get("reason", ""), "by": names.get(entry.get("actor_id", ""), "") or "System"})
+        # Results recorded before execution history existed: show the run's current result once.
+        logged = {e["run_id"] for e in events if e["kind"] == "result"}
+        for run in runs.values():
+            if run["id"] not in logged and (run.get("status") or "Not Run") in EXECUTED:
+                events.append({"kind": "result", "at": run.get("executed_at") or run.get("completed_at") or run.get("updated_at", ""), "run_id": run["id"], "case_id": run.get("test_case_id", ""),
+                               "case_key": run.get("case_key", ""), "title": run.get("case_title", ""), "status": run.get("status", ""), "previous_status": "", "attempt": "",
+                               "actual_result": run.get("actual_result", ""), "notes": run.get("execution_notes", ""), "defect_ids": run.get("defect_ids") or [],
+                               "by": names.get(run.get("executed_by", ""), "") or "—", "source": "earlier"})
+        events.sort(key=lambda e: str(e["at"]), reverse=True)
+        stats = self._cycle_stats(cycle, {r["test_case_id"]: {"cells": {cycle_id: {"status": r.get("status") or "Not Run"}}} for r in runs.values() if r.get("archived") is not True})
+        return {"cycle": {k: cycle.get(k, "") for k in ("id", "name", "status", "testing_type", "environment", "build", "start_date", "end_date", "created_at", "description")},
+                "stats": stats, "events": events[:limit], "total_events": len(events)}

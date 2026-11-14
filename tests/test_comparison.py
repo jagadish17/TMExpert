@@ -126,6 +126,36 @@ class ComparisonTests(unittest.TestCase):
         finally:
             self.admin.call("DELETE", f"/api/test_cycles/{empty}")
 
+    def test_default_pair_skips_cycles_without_results(self):
+        empty = self.admin.call("POST", "/api/cycles", {"project_id": self.project["id"], "name": "Cycle 05 (empty)", "testing_type": "Smoke", "start_date": "2026-12-05", "include_case_ids": [self.case["A"]["id"]]})[1]["cycle"]["id"]
+        try:
+            data = self.compare([self.c1, self.c2, self.c3, empty])[1]
+            self.assertEqual((data["previous_id"], data["current_id"]), (self.c2, self.c3))
+            self.assertEqual({c["name"]: c["has_results"] for c in data["cycles"]}["Cycle 05 (empty)"], False)
+            chosen = self.compare([self.c3, empty], previous_id=self.c3, current_id=empty)[1]
+            self.assertEqual(chosen["current_id"], empty)  # an explicit choice is respected
+        finally:
+            self.admin.call("DELETE", f"/api/test_cycles/{empty}")
+
+    def test_case_history_lists_every_cycle_newest_first(self):
+        status, data = self.admin.call("GET", f"/api/test-cases/{self.case['E']['id']}/cycle-history")
+        self.assertEqual(status, 200)
+        self.assertEqual([(e["cycle_name"], e["status"]) for e in data["cycles"]], [("Cycle 03", "Failed"), ("Cycle 02", "Passed"), ("Cycle 01", "Failed")])
+        self.assertEqual((data["summary"]["executed"], data["summary"]["failed"], data["summary"]["passed"]), (3, 2, 1))
+        self.assertEqual(data["cycles"][0]["attempts"][0]["status"], "Failed")
+        k = self.admin.call("GET", f"/api/test-cases/{self.case['K']['id']}/cycle-history")[1]
+        self.assertEqual([e["version"] for e in k["cycles"]], ["2", "1"])
+        self.assertEqual(self.admin.call("GET", "/api/test-cases/missing/cycle-history")[0], 404)
+
+    def test_cycle_timeline_shows_results_newest_first(self):
+        status, data = self.admin.call("GET", f"/api/cycles/{self.c3}/timeline")
+        self.assertEqual(status, 200)
+        results = [e for e in data["events"] if e["kind"] == "result"]
+        self.assertEqual(len(results), 12)
+        self.assertEqual([e["at"] for e in data["events"]], sorted((e["at"] for e in data["events"]), reverse=True))
+        self.assertEqual((data["stats"]["total"], data["stats"]["counts"]["Failed"]), (13, 4))
+        self.assertTrue(all(e["case_key"] for e in results))
+
     def test_invalid_requests_are_refused(self):
         self.assertEqual(self.compare([self.c1])[0], 400)
         self.assertEqual(self.compare([self.c1, "missing"])[0], 400)

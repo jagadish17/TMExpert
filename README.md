@@ -304,9 +304,20 @@ This keeps saving fast as history grows.
 - CSV exports neutralise cells that spreadsheet apps would treat as formulas.
 - Signing out clears everything the previous person had open in the browser tab.
 
-To share TMExpert with the team over the network, set `TMEXPERT_HOST=0.0.0.0`
-and put it behind HTTPS (for example a reverse proxy) so passwords and session
-cookies are not sent in clear text.
+## Sharing with the team on the office network
+
+Double-click **`Share-TMExpert-On-Network.cmd`**. The server window prints a
+**Team link** such as `http://192.168.1.20:8787` to send to colleagues on the same
+office network or VPN. Keep the window open while people use TMExpert.
+
+- It refuses to start while any active account still uses the default password
+  `change-me`. Sign in with `Start-TMExpert.cmd` first and set real passwords.
+- Windows must treat the office Wi-Fi/network as **Private**, and the first start
+  shows a Windows Firewall prompt: allow Python on **Private** networks only.
+- Plain HTTP is acceptable only on a trusted office network or VPN. For HTTPS, set
+  `TMEXPERT_CERT` and `TMEXPERT_KEY` to your certificate and key files (PEM); the
+  session cookie is then marked Secure automatically.
+- Nothing is reachable from the internet; only devices on the same network can connect.
 
 ## Current product scope
 

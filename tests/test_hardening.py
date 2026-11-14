@@ -164,3 +164,37 @@ class ServerHardeningTests(unittest.TestCase):
 
 
 if __name__ == "__main__": unittest.main()
+
+
+class NetworkSharingTests(unittest.TestCase):
+    def test_default_passwords_block_network_sharing(self):
+        import os, subprocess, sys
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {**os.environ, "TMEXPERT_HOST": "0.0.0.0", "TMEXPERT_PORT": "0", "TMEXPERT_DATA_DIR": tmp, "PYTHONIOENCODING": "utf-8"}
+            root = Path(__file__).resolve().parent.parent
+            result = subprocess.run([sys.executable, "server.py"], cwd=root, env=env, capture_output=True, text=True, timeout=120)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("NOT shared on the network", result.stdout)
+            self.assertIn("avery@tmexpert.local", result.stdout)
+
+    def test_default_password_detection_and_secure_cookie(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            httpd = server.make_server("127.0.0.1", 0, tmp)
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True); thread.start()
+            try:
+                self.assertEqual(server.accounts_with_default_password(httpd.app), ["avery@tmexpert.local"])
+                admin = Client(f"http://127.0.0.1:{httpd.server_address[1]}")
+                admin.login(ADMIN_EMAIL, "change-me")
+                admin.call("POST", "/api/auth/change-password", {"current_password": "change-me", "new_password": ADMIN_PASSWORD})
+                self.assertEqual(server.accounts_with_default_password(httpd.app), [])
+                httpd.tls = True  # as when TMEXPERT_CERT/TMEXPERT_KEY are set
+                request = urllib.request.Request(f"http://127.0.0.1:{httpd.server_address[1]}/api/auth/login", data=b'{"email":"avery@tmexpert.local","password":"' + ADMIN_PASSWORD.encode() + b'"}', method="POST", headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(request) as response:
+                    self.assertIn("Secure", response.headers["Set-Cookie"])
+            finally:
+                httpd.shutdown(); httpd.server_close(); thread.join(5)
+
+    def test_team_links_are_found(self):
+        addresses = server.network_addresses()
+        self.assertTrue(all(not a.startswith("127.") for a in addresses))
+        self.assertFalse(server.is_local_only("0.0.0.0")); self.assertTrue(server.is_local_only("127.0.0.1"))

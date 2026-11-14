@@ -1783,7 +1783,7 @@ function cycleOverview(cycle, summary, manage) {
 }
 
 function cycleTabs(cycle) {
-  const tabs = [["cases", "Test cases"], ["modules", "Assignments"], ["board", "Board"], ["history", "History"]];
+  const tabs = [["cases", "Test cases"], ["modules", "Assignments"], ["board", "Board"], ["history", "Cycle history"]];
   if (!can("assignments.manage")) tabs.splice(2, 1);
   if (!tabs.some(([key]) => key === state.cycleTab)) state.cycleTab = "cases";
   const body = { cases: cycleCasesTab, modules: cycleModulesTab, board: cycleBoardTab, history: () => '<div id="assignHistory"><div class="empty"><span class="spinner" aria-hidden="true"></span> Loading history…</div></div>' }[state.cycleTab](cycle);
@@ -2040,12 +2040,6 @@ async function moveCards(ids, assigneeId) {
 }
 
 // --------------------------------------------------------------- history tab
-async function loadAssignmentHistory() {
-  try {
-    const { items } = await api(`/cycles/${encodeURIComponent(state.selectedCycle)}/assignment-history`);
-    $("#assignHistory").innerHTML = items.length ? `<div class="table-wrap"><table><thead><tr><th>When</th><th>Test case</th><th>From</th><th>To</th><th>How</th><th>By</th></tr></thead><tbody>${items.map((row) => `<tr><td>${esc(fmtDate(row.created_at))}</td><td><span class="case-key">${esc(row.case_key)}</span><small class="muted block">${esc(row.module_path)}</small></td><td>${esc(row.from_name)}</td><td><strong>${esc(row.to_name)}</strong></td><td>${esc(row.reason)}</td><td>${esc(row.actor_name)}</td></tr>`).join("")}</tbody></table></div>` : '<div class="empty">No assignment changes yet.</div>';
-  } catch (error) { $("#assignHistory").innerHTML = `<div class="empty">${esc(error.message)}</div>`; }
-}
 
 // ------------------------------------------------------------------ my work
 const QUICK = [["Passed", "✓", "Pass"], ["Failed", "✗", "Fail"], ["Blocked", "⦸", "Blocked"], ["Not Applicable", "–", "N/A"]];
@@ -2370,8 +2364,9 @@ async function compareView() {
   cmp.previous = data.previous_id; cmp.current = data.current_id;
   const byId = new Map(data.cycles.map((cycle) => [cycle.id, cycle]));
   const picker = `<section class="panel cmp-picker"><div class="cmp-picker-row"><span class="detail-label">Cycles</span><div class="cycle-chips" role="group" aria-label="Cycles to include">${cycles.map((cycle) => `<label class="cycle-chip ${cmp.ids.includes(cycle.id) ? "on" : ""}"><input type="checkbox" value="${esc(cycle.id)}" ${cmp.ids.includes(cycle.id) ? "checked" : ""} aria-label="Include ${esc(cycle.name)}"><span>${esc(cycle.name)}</span><small>${esc(cmpDate(cycle))}</small></label>`).join("")}</div></div>
-      <div class="cmp-picker-row"><label class="filter"><span class="detail-label">Previous</span><select id="cmpPrevious">${data.cycles.map((cycle) => `<option value="${esc(cycle.id)}" ${cycle.id === data.previous_id ? "selected" : ""}>${esc(cycle.name)}</option>`).join("")}</select></label><span class="cmp-arrow" aria-hidden="true">→</span><label class="filter"><span class="detail-label">Current</span><select id="cmpCurrent">${data.cycles.map((cycle) => `<option value="${esc(cycle.id)}" ${cycle.id === data.current_id ? "selected" : ""}>${esc(cycle.name)}</option>`).join("")}</select></label>
-      <p class="muted cmp-explain">Test cases are matched by their record, not their title. Categories compare <strong>${esc(byId.get(data.previous_id)?.name)}</strong> with <strong>${esc(byId.get(data.current_id)?.name)}</strong>; the matrix and chart show every selected cycle in date order.</p></div></section>`;
+      <div class="cmp-picker-row"><label class="filter"><span class="detail-label">Previous</span><select id="cmpPrevious">${data.cycles.map((cycle) => `<option value="${esc(cycle.id)}" ${cycle.id === data.previous_id ? "selected" : ""}>${esc(cycle.name)}${cycle.has_results ? "" : " (no results yet)"}</option>`).join("")}</select></label><span class="cmp-arrow" aria-hidden="true">→</span><label class="filter"><span class="detail-label">Current</span><select id="cmpCurrent">${data.cycles.map((cycle) => `<option value="${esc(cycle.id)}" ${cycle.id === data.current_id ? "selected" : ""}>${esc(cycle.name)}${cycle.has_results ? "" : " (no results yet)"}</option>`).join("")}</select></label>
+      ${[data.previous_id, data.current_id].map((id) => byId.get(id)).filter((cycle) => !cycle.has_results).map((cycle) => `<div class="notice warn cmp-explain">${esc(cycle.name)} has no results yet, so test cases in it show as Not executed. Pick a cycle that has been run.</div>`).join("")}
+      <p class="muted cmp-explain">Click a test case or any result to see its history in every cycle; click a cycle name for everything that happened in that cycle. Test cases are matched by their record, not their title. Categories compare <strong>${esc(byId.get(data.previous_id)?.name)}</strong> with <strong>${esc(byId.get(data.current_id)?.name)}</strong>; the matrix and chart show every selected cycle in date order.</p></div></section>`;
   const cards = INSIGHTS.map(([key, label, hint, tone, icon]) => `<button type="button" class="insight ${tone} ${cmp.category === key ? "active" : ""}" aria-pressed="${cmp.category === key}" onclick="toggleInsight('category', '${key}')"><span class="insight-icon" aria-hidden="true">${icon}</span><span class="insight-count">${data.summary[key] || 0}</span><span class="insight-label">${esc(label)}</span><small>${esc(hint)}</small></button>`).join("") +
     `<button type="button" class="insight info ${cmp.flag === "modified" ? "active" : ""}" aria-pressed="${cmp.flag === "modified"}" onclick="toggleInsight('flag', 'modified')"><span class="insight-icon" aria-hidden="true">✎</span><span class="insight-count">${data.modified}</span><span class="insight-label">Definition changed</span><small>Different version between the two cycles</small></button>
      <button type="button" class="insight serious ${cmp.flag === "reopened" ? "active" : ""}" aria-pressed="${cmp.flag === "reopened"}" onclick="toggleInsight('flag', 'reopened')"><span class="insight-icon" aria-hidden="true">↺</span><span class="insight-count">${data.reopened}</span><span class="insight-label">Reopened</span><small>Failed, passed, then failed again</small></button>`;
@@ -2390,7 +2385,7 @@ async function compareView() {
         <label class="filter"><span class="visually-hidden">Assigned to</span><select id="cmpAssignee" aria-label="Assigned to in current cycle"><option value="">Assigned to: Anyone</option>${assignees.map(([id, name]) => `<option value="${esc(id)}" ${cmp.assignee === id ? "selected" : ""}>${esc(name)}</option>`).join("")}</select></label>
         <span class="muted"><strong id="cmpCount"></strong> shown</span>
       </div>
-      <div class="table-wrap"><table class="case-table cmp-matrix"><thead><tr><th>ID</th><th>Test case</th>${data.cycles.map((cycle) => `<th class="${cycle.id === data.previous_id ? "col-prev" : cycle.id === data.current_id ? "col-cur" : ""}">${esc(cycle.name)}<small class="block">${cycle.id === data.previous_id ? "Previous · " : cycle.id === data.current_id ? "Current · " : ""}${esc(cmpDate(cycle))}</small></th>`).join("")}<th>Insight</th></tr></thead><tbody id="cmpRows"></tbody></table></div>
+      <div class="table-wrap"><table class="case-table cmp-matrix"><thead><tr><th>ID</th><th>Test case</th>${data.cycles.map((cycle) => `<th class="${cycle.id === data.previous_id ? "col-prev" : cycle.id === data.current_id ? "col-cur" : ""}"><button class="th-link" title="Cycle history" onclick="openCycleTimeline(${jsArg(cycle.id)})">${esc(cycle.name)}</button><small class="block">${cycle.id === data.previous_id ? "Previous · " : cycle.id === data.current_id ? "Current · " : ""}${esc(cmpDate(cycle))}${cycle.has_results ? "" : " · no results"}</small></th>`).join("")}<th>Insight</th></tr></thead><tbody id="cmpRows"></tbody></table></div>
     </section>`;
 }
 
@@ -2446,9 +2441,9 @@ function cmpRowsHtml() {
       if (!cell) return `<td class="${cls}"><span class="muted" title="Not in this cycle">—</span></td>`;
       const changed = lastVersion && lastVersion !== cell.version;
       lastVersion = cell.version;
-      return `<td class="${cls}">${status(cell.status)}<small class="cell-meta">v${esc(cell.version)}${changed ? ' <span class="changed" title="Test case definition changed since the previous cycle">✎ changed</span>' : ""}${cell.defect_ids && defectList(cell.defect_ids).length ? ` · ${esc(defectList(cell.defect_ids).join(", "))}` : ""}</small></td>`;
+      return `<td class="${cls}"><button class="cell-link" aria-label="${esc(row.case_key)} in ${esc(cycle.name)}: ${esc(cell.status)}. Show history" onclick="openCaseHistory(${jsArg(row.test_case_id)}, ${jsArg(cycle.id)})">${status(cell.status)}</button><small class="cell-meta">v${esc(cell.version)}${changed ? ' <span class="changed" title="Test case definition changed since the previous cycle">✎ changed</span>' : ""}${cell.defect_ids && defectList(cell.defect_ids).length ? ` · ${esc(defectList(cell.defect_ids).join(", "))}` : ""}</small></td>`;
     }).join("");
-    return `<tr><td class="case-id-cell"><button class="link case-key" onclick="viewCase(${jsArg(row.test_case_id)})">${esc(row.case_key)}</button></td><td class="case-title-cell"><strong>${esc(row.title)}</strong><small class="muted block">${esc(row.module_path)}</small></td>${cells}
+    return `<tr><td class="case-id-cell"><button class="link case-key" title="History in every cycle" onclick="openCaseHistory(${jsArg(row.test_case_id)})">${esc(row.case_key)}</button></td><td class="case-title-cell"><button class="link-plain" onclick="openCaseHistory(${jsArg(row.test_case_id)})">${esc(row.title)}</button><small class="muted block">${esc(row.module_path)}</small></td>${cells}
       <td><span class="insight-chip ${tone[row.category] || "neutral"}">${esc(data.labels[row.category])}</span>${row.flags.includes("reopened") ? '<span class="insight-chip serious">Reopened</span>' : ""}${row.flips >= 2 ? `<small class="muted block">${row.flips} pass/fail flips</small>` : ""}</td></tr>`;
   }).join("");
 }
@@ -2804,6 +2799,80 @@ function bindAudit() {
   $("#auditFrom").onchange = change("date_from"); $("#auditTo").onchange = change("date_to");
   let timer = null;
   $("#auditSearch").oninput = (event) => { clearTimeout(timer); timer = setTimeout(() => { a.q = event.target.value; a.page = ""; render(); }, 400); };
+}
+
+// ------------------------------------------------------- history side panel
+function openDrawer(title, subtitle, body) {
+  closeDrawer();
+  const overlay = document.createElement("div");
+  overlay.className = "drawer-overlay"; overlay.id = "drawer";
+  overlay.innerHTML = `<aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle"><div class="drawer-head"><div><h2 id="drawerTitle">${esc(title)}</h2>${subtitle ? `<p class="muted">${subtitle}</p>` : ""}</div><button class="icon-button" aria-label="Close" onclick="closeDrawer()">✕</button></div><div class="drawer-body">${body}</div></aside>`;
+  overlay.onclick = (event) => { if (event.target === overlay) closeDrawer(); };
+  document.body.append(overlay);
+  document.addEventListener("keydown", drawerKey);
+  overlay.querySelector(".drawer-head button").focus();
+}
+
+function drawerKey(event) { if (event.key === "Escape") closeDrawer(); }
+
+function closeDrawer() {
+  document.getElementById("drawer")?.remove();
+  document.removeEventListener("keydown", drawerKey);
+}
+
+function drawerLoading(title) { openDrawer(title, "", '<div class="empty"><span class="spinner" aria-hidden="true"></span> Loading…</div>'); }
+
+async function openCaseHistory(caseId, focusCycle = "") {
+  drawerLoading("Test case history");
+  let data;
+  try { data = await api(`/test-cases/${encodeURIComponent(caseId)}/cycle-history`); }
+  catch (error) { openDrawer("Test case history", "", `<div class="notice danger">${esc(error.message)}</div>`); return; }
+  const s = data.summary;
+  const cards = data.cycles.map((entry) => `<article class="hist-cycle ${entry.cycle_id === focusCycle ? "focus" : ""}" id="hc-${esc(entry.cycle_id)}">
+      <div class="hist-head"><div><strong>${esc(entry.cycle_name)}</strong><small class="muted block">${esc(entry.cycle_date)}${entry.testing_type ? ` · ${esc(entry.testing_type)}` : ""}${entry.build ? ` · build ${esc(entry.build)}` : ""}${entry.environment ? ` · ${esc(entry.environment)}` : ""}${entry.cycle_status ? ` · cycle ${esc(entry.cycle_status)}` : ""}</small></div>${status(entry.status)}</div>
+      <dl class="hist-facts"><div><dt>Version</dt><dd>v${esc(entry.version || "1")}</dd></div><div><dt>Assigned to</dt><dd>${esc(entry.assignee_name || "Unassigned")}</dd></div><div><dt>Last executed</dt><dd>${entry.executed_at ? `${esc(entry.executed_by_name || "—")} · ${esc(fmtDate(entry.executed_at))}` : "Not yet"}</dd></div><div><dt>Attempts</dt><dd>${esc(entry.attempt_count)}</dd></div></dl>
+      ${entry.actual_result ? `<p class="prewrap"><span class="detail-label">Actual result</span>${esc(entry.actual_result)}</p>` : ""}
+      ${entry.notes ? `<p class="prewrap"><span class="detail-label">Notes</span>${esc(entry.notes)}</p>` : ""}
+      ${defectList(entry.defect_ids).length ? `<div class="defects">${defectLinks(entry.defect_ids)}</div>` : ""}
+      ${entry.evidence.length ? `<div class="history-files">${entry.evidence.map((file) => `<a href="/api/attachments/${esc(file.id)}/file" target="_blank" rel="noopener">${esc(file.filename)}</a>`).join("")}</div>` : ""}
+      ${entry.attempts.length > 1 || (entry.attempts[0]?.step_results || []).length ? `<details><summary>All ${entry.attempts.length} attempt${entry.attempts.length === 1 ? "" : "s"}</summary><ol class="history-steps">${entry.attempts.map((attempt) => `<li>${status(attempt.status)} <span class="muted">from ${esc(attempt.previous_status)} · ${esc(attempt.executed_by_name)} · ${esc(fmtDate(attempt.executed_at))}</span>${attempt.actual_result ? `<div class="prewrap">${esc(attempt.actual_result)}</div>` : ""}${(attempt.step_results || []).length ? `<div class="muted">${attempt.step_results.map((step) => `Step ${esc(step.step)}: ${esc(step.status)}`).join(" · ")}</div>` : ""}</li>`).join("")}</ol></details>` : ""}
+      <div class="hist-actions"><button class="link" onclick="closeDrawer(); openExecution(${jsArg(entry.run_id)})">Open in this cycle</button></div>
+    </article>`).join("");
+  openDrawer(String(data.case.title || "").startsWith(data.case.case_key) ? data.case.title : `${data.case.case_key} · ${data.case.title}`, `In ${s.cycles} cycle${s.cycles === 1 ? "" : "s"} · executed ${s.executed} · ${s.passed} passed · ${s.failed} failed · ${s.blocked} blocked${s.defects.length ? ` · defects ${esc(s.defects.join(", "))}` : ""}`,
+    `${cards || '<div class="empty">This test case has not been in any cycle yet.</div>'}<p class="drawer-foot"><button class="link" onclick="closeDrawer(); viewCase(${jsArg(data.case.id)})">Open the test case in the repository</button></p>`);
+  if (focusCycle) document.getElementById(`hc-${focusCycle}`)?.scrollIntoView({ block: "start" });
+}
+
+function timelineHtml(data, { compact = false } = {}) {
+  const events = data.events;
+  if (!events.length) return '<div class="empty">Nothing has been recorded in this cycle yet.</div>';
+  return `<ol class="timeline">${events.map((event) => `<li class="tl ${event.kind}"><span class="tl-dot" aria-hidden="true"></span><div>
+      <div class="tl-head"><button class="link case-key" onclick="${compact ? "" : ""}openCaseHistory(${jsArg(event.case_id)}, ${jsArg(data.cycle.id)})">${esc(event.case_key || "Test case")}</button>
+      ${event.kind === "result" ? `${event.previous_status ? `${status(event.previous_status)} → ` : ""}${status(event.status)}${event.attempt ? ` <span class="muted">attempt ${esc(event.attempt)}</span>` : ""}` : `<span>Assigned <strong>${esc(event.from)}</strong> → <strong>${esc(event.to)}</strong></span>`}</div>
+      <small class="muted">${esc(event.by)} · ${esc(fmtDate(event.at))}${event.kind === "assignment" && event.reason ? ` · ${esc(event.reason)}` : ""}${event.source === "earlier" ? " · recorded before history tracking" : ""}</small>
+      ${event.title ? `<div class="tl-title">${esc(event.title)}</div>` : ""}
+      ${event.kind === "result" && event.actual_result ? `<div class="prewrap tl-text">${esc(event.actual_result)}</div>` : ""}
+      ${event.kind === "result" && defectList(event.defect_ids).length ? `<div class="defects">${defectLinks(event.defect_ids)}</div>` : ""}
+    </div></li>`).join("")}</ol>${data.total_events > events.length ? `<p class="muted">Showing the latest ${events.length} of ${data.total_events} events.</p>` : ""}`;
+}
+
+async function openCycleTimeline(cycleId) {
+  drawerLoading("Cycle history");
+  let data;
+  try { data = await api(`/cycles/${encodeURIComponent(cycleId)}/timeline`); }
+  catch (error) { openDrawer("Cycle history", "", `<div class="notice danger">${esc(error.message)}</div>`); return; }
+  const t = data.stats, c = data.cycle;
+  openDrawer(c.name, `${esc(c.testing_type || "Test cycle")} · ${esc(c.status || "Not Started")}${c.build ? ` · build ${esc(c.build)}` : ""}${c.environment ? ` · ${esc(c.environment)}` : ""}`,
+    `<div class="hist-stats"><div><strong>${t.total}</strong><span>test cases</span></div><div><strong>${t.executed}</strong><span>executed (${t.completion}%)</span></div><div><strong>${t.counts.Passed}</strong><span>passed</span></div><div><strong>${t.counts.Failed}</strong><span>failed</span></div><div><strong>${t.counts.Blocked}</strong><span>blocked</span></div><div><strong>${t.executed ? `${t.pass_rate}%` : "—"}</strong><span>pass rate</span></div></div>
+     <h3 class="confirm-subhead">What happened, newest first</h3>${timelineHtml(data)}
+     <p class="drawer-foot"><button class="link" onclick="closeDrawer(); state.selectedCycle = ${jsArg(c.id)}; state.cycleTab = 'cases'; go('execution')">Open this cycle in Test Execution</button></p>`);
+}
+
+async function loadAssignmentHistory() {
+  try {
+    const data = await api(`/cycles/${encodeURIComponent(state.selectedCycle)}/timeline`);
+    $("#assignHistory").innerHTML = `<div class="tab-intro muted">Every result recorded and every assignment change in this cycle. Click a test case ID for its history across all cycles.</div>${timelineHtml(data)}`;
+  } catch (error) { $("#assignHistory").innerHTML = `<div class="empty">${esc(error.message)}</div>`; }
 }
 
 async function rebuildIndex() {
