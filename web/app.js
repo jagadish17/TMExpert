@@ -776,6 +776,7 @@ function moduleChip(folder) {
 }
 
 const ICON_FOLDER = '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 3.5a1 1 0 0 1 1-1h3.6l1.4 1.6h6a1 1 0 0 1 1 1v7.4a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z" fill="currentColor"/></svg>';
+const ICON_CHEVRON = '<svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 3.5 10 8l-4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const ICON_ALL = '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3h12v2H2zm0 4h12v2H2zm0 4h12v2H2z" fill="currentColor"/></svg>';
 const ICON_CYCLE = '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2a6 6 0 1 1-5.6 3.8l1.8.7A4 4 0 1 0 8 4v2L4.5 3 8 0z" fill="currentColor"/></svg>';
 
@@ -791,18 +792,30 @@ function folderTree(folders, cases) {
     return value;
   };
   const editable = can("repository.write");
-  const renderChildren = (parentId, depth = 1) => (children.get(parentId) || []).map((folder) => {
-    const hasChildren = (children.get(folder.id) || []).length > 0;
+  const rows = [];
+  const walk = (parentId, depth) => (children.get(parentId) || []).forEach((folder) => {
+    const kids = children.get(folder.id) || [];
     const collapsed = state.collapsedFolders.has(folder.id);
-    const nested = hasChildren && !collapsed ? renderChildren(folder.id, depth + 1) : "";
-    // The badge counts test cases directly in this module; the tooltip adds those in submodules.
     const own = direct.get(folder.id) || 0, all = total(folder.id);
-    const countText = hasChildren && all !== own ? `${own} here · ${all} including submodules` : `${own} test case${own === 1 ? "" : "s"}`;
-    return `<div class="tree-branch"><div class="tree-entry" style="--depth:${Math.min(depth, 8)}">${hasChildren ? `<button type="button" class="tree-toggle" data-toggle-folder="${esc(folder.id)}" aria-label="${collapsed ? "Expand" : "Collapse"} ${esc(folder.name)}" aria-expanded="${!collapsed}">${collapsed ? "▸" : "▾"}</button>` : '<span class="tree-toggle-placeholder"></span>'}<button type="button" class="tree-node ${state.selectedFolder === folder.id ? "selected" : ""}" data-folder="${esc(folder.id)}" data-folder-name="${esc(folder.name)}" aria-label="${esc(folder.name)}, ${countText}${editable && folder.approval_status && folder.approval_status !== "Approved" ? `, module ${esc(statusLabel(folder.approval_status))}` : ""}" title="${esc(folder.path || folder.name)} · ${countText}${editable ? " · drag to move, right-click for options" : ""}" ${editable ? 'draggable="true"' : ""}><span class="tree-folder-icon">${ICON_FOLDER}</span><span class="tree-label">${esc(folder.name)}</span>${editable ? moduleChip(folder) : ""}${own ? `<span class="tree-count">${own}</span>` : (hasChildren ? "" : '<span class="tree-count empty">0</span>')}</button></div>${nested ? `<div class="tree-children">${nested}</div>` : ""}</div>`;
-  }).join("");
+    const countText = kids.length && all !== own ? `${own} here · ${all} including submodules` : `${own} test case${own === 1 ? "" : "s"}`;
+    const approval = folder.approval_status || "Approved";
+    const badge = editable && approval !== "Approved" ? `<span class="mod-badge ${esc(approval.toLowerCase().replaceAll(" ", "-"))}">${esc(approval === "In Review" ? "Pending" : approval)}</span>` : "";
+    rows.push(`<div class="tree-branch mtree-row" style="--depth:${Math.min(depth, 10)}">
+      ${kids.length ? `<button type="button" class="tree-toggle mtree-toggle" data-toggle-folder="${esc(folder.id)}" aria-label="${collapsed ? "Expand" : "Collapse"} ${esc(folder.name)}" aria-expanded="${!collapsed}">${ICON_CHEVRON}</button>` : '<span class="mtree-toggle" aria-hidden="true"></span>'}
+      <button type="button" class="tree-node mtree-node ${state.selectedFolder === folder.id ? "selected" : ""}" data-folder="${esc(folder.id)}" data-folder-name="${esc(folder.name)}" aria-label="${esc(folder.name)}, ${countText}${badge ? `, module ${esc(statusLabel(approval))}` : ""}" title="${esc(folder.path || folder.name)} — ${countText}" ${editable ? 'draggable="true"' : ""}>
+        <span class="mtree-icon">${ICON_FOLDER}</span><span class="tree-label mtree-label">${esc(folder.name)}</span>${badge}<span class="mtree-count ${own ? "" : "zero"}">${own || (kids.length ? "" : "0")}</span>
+      </button></div>`);
+    if (kids.length && !collapsed) walk(folder.id, depth + 1);
+  });
   const rootCollapsed = state.collapsedFolders.has("");
-  const rootChildren = rootCollapsed ? "" : renderChildren("");
-  return `<div class="tree-entry root-entry">${(children.get("") || []).length ? `<button type="button" class="tree-toggle" data-toggle-folder="" aria-label="${rootCollapsed ? "Expand" : "Collapse"} ${esc(state.project.name)}" aria-expanded="${!rootCollapsed}">${rootCollapsed ? "▸" : "▾"}</button>` : '<span class="tree-toggle-placeholder"></span>'}<button type="button" class="tree-node root-node ${state.selectedFolder ? "" : "selected"}" data-folder="" data-folder-name="${esc(state.project.name)}" aria-label="All test cases in ${esc(state.project.name)}, ${cases.length}" title="Every test case in ${esc(state.project.name)}"><span class="tree-folder-icon">${ICON_ALL}</span><span class="tree-label">All test cases</span><span class="tree-count">${cases.length}</span></button></div>${rootChildren || (rootCollapsed ? "" : `<div class="tree-empty">${editable ? "No modules yet. Add one to organize your test cases." : "No approved modules yet."}</div>`)}`;
+  if (!rootCollapsed) walk("", 1);
+  const hasRootKids = (children.get("") || []).length > 0;
+  const root = `<div class="mtree-row root" style="--depth:0">
+      ${hasRootKids ? `<button type="button" class="tree-toggle mtree-toggle" data-toggle-folder="" aria-label="${rootCollapsed ? "Expand" : "Collapse"} all modules" aria-expanded="${!rootCollapsed}">${ICON_CHEVRON}</button>` : '<span class="mtree-toggle" aria-hidden="true"></span>'}
+      <button type="button" class="tree-node mtree-node ${state.selectedFolder ? "" : "selected"}" data-folder="" data-folder-name="${esc(state.project.name)}" aria-label="All test cases in ${esc(state.project.name)}, ${cases.length}" title="Every test case in ${esc(state.project.name)}">
+        <span class="mtree-icon">${ICON_ALL}</span><span class="tree-label mtree-label">All test cases</span><span class="mtree-count">${cases.length}</span></button></div>`;
+  const empty = !rows.length && !rootCollapsed ? `<div class="tree-empty">${editable ? "No modules yet. Add one to organize your test cases." : "No approved modules yet."}</div>` : "";
+  return `<div class="mtree" role="tree">${root}${rows.join("")}${empty}</div>`;
 }
 
 function filteredCases() {

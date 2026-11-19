@@ -823,3 +823,36 @@ a.defect-chip:hover { text-decoration: underline; }
 .exec-table .status-col { width: 128px; }
 .exec-table .last-status-select { max-width: 120px; }
 .exec-table .owner { gap: 5px; }
+
+/* Module tree (flat rows) */
+.mtree { display: grid; gap: 1px; }
+.mtree-row { display: flex; align-items: center; height: 32px; padding-left: calc(var(--depth, 0) * 14px); }
+.mtree-row[hidden] { display: none; }
+.mtree-toggle { display: grid; flex: 0 0 20px; width: 20px; height: 24px; padding: 0; place-items: center; border: 0; border-radius: 4px; background: transparent; color: #7b8ba0; font-size: 15px; line-height: 1; cursor: pointer; }
+span.mtree-toggle { cursor: default; }
+button.mtree-toggle:hover { background: #eef3fa; color: var(--blue); }
+.repo-v2 .mtree-node { display: flex; flex: 1; align-items: center; min-width: 0; height: 30px; gap: 8px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: #33465d; font-size: 13px; text-align: left; cursor: pointer; }
+.repo-v2 .mtree-node:hover { background: #f2f6fb; }
+.repo-v2 .mtree-node.selected { background: var(--blue-pale); color: var(--blue-dark); font-weight: 600; }
+.mtree-icon { display: inline-flex; flex: none; color: #8aa0c2; }
+.mtree-node.selected .mtree-icon { color: var(--blue); }
+.repo-v2 .mtree-label { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; overflow-wrap: normal; }
+.mod-badge { flex: none; padding: 1px 6px; border-radius: 4px; background: #eef2f5; color: #5d6c7f; font-size: 10px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; }
+.mod-badge.in-review { background: #fff5df; color: #8a5200; }
+.mod-badge.rejected { background: #fff0f1; color: #ad2a3b; }
+.mtree-count { flex: none; min-width: 24px; padding: 1px 6px; border-radius: 99px; background: #eef2f6; color: #5c6d82; font-size: 11px; font-weight: 650; text-align: center; }
+.mtree-count:empty { display: none; }
+.mtree-count.zero { background: transparent; color: #b0bccb; }
+.mtree-node.selected .mtree-count { background: #d6e5fb; color: var(--blue-dark); }
+.mtree-row.root .mtree-node { font-weight: 650; }
+.mtree-row.root { margin-bottom: 2px; padding-bottom: 2px; border-bottom: 1px solid #eef1f5; height: 36px; }
+.mtree { grid-template-columns: minmax(0, 1fr); }
+.mtree-row { min-width: 0; }
+.repo-v2 .tree-content { overflow-x: hidden; }
+.mtree-toggle .chev { width: 14px; height: 14px; transition: transform .15s; }
+.mtree-toggle[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.repo-v2 { grid-template-columns: minmax(240px, 280px) minmax(0, 1fr); }
+.mtree-row { padding-left: calc(var(--depth, 0) * 12px); }
+.repo-v2 .mtree-node { gap: 6px; padding: 0 6px; }
+.mod-badge { padding: 0 5px; font-size: 10px; letter-spacing: 0; text-transform: none; line-height: 16px; }
+.mtree-count.zero { display: none; }
