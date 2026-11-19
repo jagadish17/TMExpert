@@ -343,7 +343,7 @@ async function render() {
     if (state.view === "audit") { bindAudit(); const search = $("#auditSearch"); if (search && state.audit.q) { search.focus(); search.setSelectionRange(search.value.length, search.value.length); } }
     const queueAll = $("#queueAll");
     if (queueAll) queueAll.onchange = () => document.querySelectorAll(".queue-check").forEach((item) => { item.checked = queueAll.checked; });
-    document.querySelectorAll(".tree-node[data-cycle]").forEach((item) => {
+    document.querySelectorAll(".tree-node[data-cycle], .cycle-item[data-cycle]").forEach((item) => {
       item.onclick = async () => { state.selectedCycle = item.dataset.cycle || ""; state.runSelection.clear(); state.boardSelection.clear(); state.runFilter.module = ""; await render(); };
     });
     document.querySelectorAll(".last-status-select[data-run-status]").forEach((item) => {
@@ -775,6 +775,10 @@ function moduleChip(folder) {
   return value === "Approved" ? "" : `<span class="module-chip ${esc(value.toLowerCase().replaceAll(" ", "-"))}" title="Module ${esc(statusLabel(value))}">${esc(value === "In Review" ? "Pending" : value)}</span>`;
 }
 
+const ICON_FOLDER = '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 3.5a1 1 0 0 1 1-1h3.6l1.4 1.6h6a1 1 0 0 1 1 1v7.4a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z" fill="currentColor"/></svg>';
+const ICON_ALL = '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3h12v2H2zm0 4h12v2H2zm0 4h12v2H2z" fill="currentColor"/></svg>';
+const ICON_CYCLE = '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2a6 6 0 1 1-5.6 3.8l1.8.7A4 4 0 1 0 8 4v2L4.5 3 8 0z" fill="currentColor"/></svg>';
+
 function folderTree(folders, cases) {
   const children = folderChildren(folders);
   const direct = new Map();
@@ -791,11 +795,14 @@ function folderTree(folders, cases) {
     const hasChildren = (children.get(folder.id) || []).length > 0;
     const collapsed = state.collapsedFolders.has(folder.id);
     const nested = hasChildren && !collapsed ? renderChildren(folder.id, depth + 1) : "";
-    return `<div class="tree-branch"><div class="tree-entry" style="--depth:${Math.min(depth, 8)}">${hasChildren ? `<button type="button" class="tree-toggle" data-toggle-folder="${esc(folder.id)}" aria-label="${collapsed ? "Expand" : "Collapse"} ${esc(folder.name)}" aria-expanded="${!collapsed}">${collapsed ? "▸" : "▾"}</button>` : '<span class="tree-toggle-placeholder"></span>'}<button type="button" class="tree-node ${state.selectedFolder === folder.id ? "selected" : ""}" data-folder="${esc(folder.id)}" data-folder-name="${esc(folder.name)}" aria-label="${esc(folder.name)}, ${total(folder.id)} test cases${editable && folder.approval_status && folder.approval_status !== "Approved" ? `, module ${esc(statusLabel(folder.approval_status))}` : ""}" ${editable ? 'draggable="true" title="Drag to move · Right-click for options"' : ""}><span class="tree-folder-icon">▰</span><span class="tree-label">${esc(folder.name)}</span>${editable ? moduleChip(folder) : ""}<span class="tree-count">${total(folder.id)}</span></button></div>${nested ? `<div class="tree-children">${nested}</div>` : ""}</div>`;
+    // The badge counts test cases directly in this module; the tooltip adds those in submodules.
+    const own = direct.get(folder.id) || 0, all = total(folder.id);
+    const countText = hasChildren && all !== own ? `${own} here · ${all} including submodules` : `${own} test case${own === 1 ? "" : "s"}`;
+    return `<div class="tree-branch"><div class="tree-entry" style="--depth:${Math.min(depth, 8)}">${hasChildren ? `<button type="button" class="tree-toggle" data-toggle-folder="${esc(folder.id)}" aria-label="${collapsed ? "Expand" : "Collapse"} ${esc(folder.name)}" aria-expanded="${!collapsed}">${collapsed ? "▸" : "▾"}</button>` : '<span class="tree-toggle-placeholder"></span>'}<button type="button" class="tree-node ${state.selectedFolder === folder.id ? "selected" : ""}" data-folder="${esc(folder.id)}" data-folder-name="${esc(folder.name)}" aria-label="${esc(folder.name)}, ${countText}${editable && folder.approval_status && folder.approval_status !== "Approved" ? `, module ${esc(statusLabel(folder.approval_status))}` : ""}" title="${esc(folder.path || folder.name)} · ${countText}${editable ? " · drag to move, right-click for options" : ""}" ${editable ? 'draggable="true"' : ""}><span class="tree-folder-icon">${ICON_FOLDER}</span><span class="tree-label">${esc(folder.name)}</span>${editable ? moduleChip(folder) : ""}${own ? `<span class="tree-count">${own}</span>` : (hasChildren ? "" : '<span class="tree-count empty">0</span>')}</button></div>${nested ? `<div class="tree-children">${nested}</div>` : ""}</div>`;
   }).join("");
   const rootCollapsed = state.collapsedFolders.has("");
   const rootChildren = rootCollapsed ? "" : renderChildren("");
-  return `<div class="tree-entry root-entry">${(children.get("") || []).length ? `<button type="button" class="tree-toggle" data-toggle-folder="" aria-label="${rootCollapsed ? "Expand" : "Collapse"} ${esc(state.project.name)}" aria-expanded="${!rootCollapsed}">${rootCollapsed ? "▸" : "▾"}</button>` : '<span class="tree-toggle-placeholder"></span>'}<button type="button" class="tree-node root-node ${state.selectedFolder ? "" : "selected"}" data-folder="" data-folder-name="${esc(state.project.name)}" aria-label="All modules in ${esc(state.project.name)}, ${cases.length} test cases"><span class="tree-folder-icon">▱</span><span class="tree-label">${esc(state.project.name)}</span><span class="tree-count">${cases.length}</span></button></div>${rootChildren || (rootCollapsed ? "" : `<div class="tree-empty">${editable ? "No modules yet. Add one to organize your test cases." : "No approved modules yet."}</div>`)}`;
+  return `<div class="tree-entry root-entry">${(children.get("") || []).length ? `<button type="button" class="tree-toggle" data-toggle-folder="" aria-label="${rootCollapsed ? "Expand" : "Collapse"} ${esc(state.project.name)}" aria-expanded="${!rootCollapsed}">${rootCollapsed ? "▸" : "▾"}</button>` : '<span class="tree-toggle-placeholder"></span>'}<button type="button" class="tree-node root-node ${state.selectedFolder ? "" : "selected"}" data-folder="" data-folder-name="${esc(state.project.name)}" aria-label="All test cases in ${esc(state.project.name)}, ${cases.length}" title="Every test case in ${esc(state.project.name)}"><span class="tree-folder-icon">${ICON_ALL}</span><span class="tree-label">All test cases</span><span class="tree-count">${cases.length}</span></button></div>${rootChildren || (rootCollapsed ? "" : `<div class="tree-empty">${editable ? "No modules yet. Add one to organize your test cases." : "No approved modules yet."}</div>`)}`;
 }
 
 function filteredCases() {
@@ -1658,65 +1665,6 @@ function runStatusSelect(run, label) {
     : status(current);
 }
 
-async function execution() {
-  const projectId = encodeURIComponent(state.project.id);
-  const [runs, cycles, cases] = await Promise.all([
-    apiAll(`/test_runs?project_id=${projectId}`),
-    apiAll(`/test_cycles?project_id=${projectId}`),
-    apiAll(`/test_cases?project_id=${projectId}`),
-  ]);
-  const manage = can("cycles.write");
-  if (state.selectedCycle && !cycles.some((cycle) => cycle.id === state.selectedCycle)) state.selectedCycle = "";
-  const caseById = new Map(cases.map((testCase) => [testCase.id, testCase]));
-  const cycleById = new Map(cycles.map((cycle) => [cycle.id, cycle]));
-  const cycle = cycleById.get(state.selectedCycle);
-  let summary = null;
-  cycleData = null;
-  if (cycle) [summary, cycleData] = await Promise.all([api(`/cycles/${encodeURIComponent(cycle.id)}/summary`), api(`/cycles/${encodeURIComponent(cycle.id)}/assignments`)]);
-  const cycleTree = `<div class="tree-entry root-entry"><span class="tree-toggle-placeholder"></span><button type="button" class="tree-node root-node ${state.selectedCycle ? "" : "selected"}" data-cycle="" aria-label="All runs, ${runs.length}"><span class="tree-folder-icon">▱</span><span class="tree-label">All runs</span><span class="tree-count">${runs.length}</span></button></div>` +
-    cycles.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))).map((item) => {
-      const count = runs.filter((run) => run.cycle_id === item.id).length;
-      const mine = runs.filter((run) => run.cycle_id === item.id && run.assignee_id === state.user.id && ["Not Run", "In Progress"].includes(run.status || "Not Run")).length;
-      return `<div class="tree-branch"><div class="tree-entry" style="--depth:1"><span class="tree-toggle-placeholder"></span><button type="button" class="tree-node ${state.selectedCycle === item.id ? "selected" : ""}" data-cycle="${esc(item.id)}" aria-label="${esc(item.name)}, ${count} test cases${mine ? `, ${mine} open for you` : ""}"><span class="tree-folder-icon">▶</span><span class="tree-label">${esc(item.name)}</span>${mine ? `<span class="module-chip mine" title="Open test cases assigned to you">${mine} mine</span>` : item.testing_type ? `<span class="module-chip">${esc(item.testing_type)}</span>` : ""}<span class="tree-count">${count}</span></button></div></div>`;
-    }).join("") || `<div class="tree-empty">No cycles yet.${manage ? " Create one to start testing." : ""}</div>`;
-  const collapsed = state.executionSidebarCollapsed;
-  let main;
-  if (cycle) {
-    main = cycleOverview(cycle, summary, manage) + cycleTabs(cycle);
-  } else {
-    const totals = RUN_STATES.reduce((acc, item) => ({ ...acc, [item]: 0 }), {});
-    runs.forEach((run) => { totals[run.status || "Not Run"] = (totals[run.status || "Not Run"] || 0) + 1; });
-    const sorted = [...runs].sort((a, b) => String(a.case_key || "").localeCompare(String(b.case_key || ""), undefined, { numeric: true }));
-    const rows = sorted.map((run) => {
-      const testCase = caseById.get(run.test_case_id);
-      const key = run.case_key || (testCase ? caseLabel(testCase) : "—");
-      return `<tr><td class="case-id-cell"><button class="link case-key" onclick="openExecution(${jsArg(run.id)})">${esc(key)}</button></td><td class="case-title-cell"><button class="link-plain" onclick="openExecution(${jsArg(run.id)})">${esc(run.case_title || testCase?.title || "Test case not visible to you")}</button></td><td>${esc(cycleById.get(run.cycle_id)?.name || "—")}</td><td>${ownerChip(run)}</td><td>${runStatusSelect(run, key)}</td></tr>`;
-    }).join("");
-    main = `<div class="metrics execution-metrics">${["Not Run", "In Progress", "Passed", "Failed", "Blocked"].map((label) => `<div class="metric"><div class="metric-label">${esc(label)}</div><div class="metric-value">${totals[label] || 0}</div></div>`).join("")}</div>
-      <section class="panel repository-cases"><div class="toolbar repository-toolbar"><div class="repo-toolbar-left">${collapsed ? `<button class="icon-button" title="Show cycles" aria-label="Show cycles" onclick="toggleExecutionSidebar()">▶</button>` : ""}<div><strong>${runs.length}</strong><span class="muted"> test cases across all cycles · select a cycle to assign and execute</span></div></div></div>
-      <div class="table-wrap"><table class="case-table"><thead><tr><th>ID</th><th>Test case</th><th>Cycle</th><th>Assigned to</th><th>Status</th></tr></thead><tbody>${rows || `<tr><td colspan="5"><div class="empty">${manage ? (cases.length ? 'No test cycles yet. <button class="link" onclick="cycleWizard()">Create a test cycle</button> to start testing.' : "Add and approve test cases in the repository, then create a test cycle.") : "No test cycles yet. Your admin creates cycles from the repository."}</div></td></tr>`}</tbody></table></div></section>`;
-  }
-  return heading("Test Execution", "Create cycles, assign the work, and track every execution.", manage ? '<button class="button" onclick="cycleWizard()">+ Create test cycle</button>' : "") +
-    `<div class="repo ${collapsed ? "repo-collapsed" : ""}">
-      ${collapsed ? "" : `<aside class="panel tree"><div class="tree-header"><div><strong>Test cycles</strong><small>${cycles.length} cycle${cycles.length === 1 ? "" : "s"}</small></div><div class="tree-actions">${manage ? '<button class="icon-button" title="Create test cycle" aria-label="Create test cycle" onclick="cycleWizard()">+</button>' : ""}<button class="icon-button" title="Collapse cycles" aria-label="Collapse cycles" onclick="toggleExecutionSidebar()">◀</button></div></div><div class="tree-content">${cycleTree}</div></aside>`}
-      <div class="execution-main">${main}</div>
-    </div>`;
-}
-
-function cycleOverview(cycle, summary, manage) {
-  return `<section class="panel cycle-overview">
-      <div class="cycle-overview-head"><div><div class="eyebrow">${esc(cycle.testing_type || "Test cycle")}</div><h2>${esc(cycle.name)}</h2>
-        <p class="muted">${[cycle.environment && `Environment ${esc(cycle.environment)}`, cycle.build && `Build ${esc(cycle.build)}`, (cycle.start_date || cycle.end_date) && `${esc(cycle.start_date || "?")} → ${esc(cycle.end_date || "?")}`].filter(Boolean).join(" · ") || "No environment or dates set"}</p>
-        ${cycle.description ? `<p class="prewrap">${esc(cycle.description)}</p>` : ""}</div>
-        <div class="heading-actions">${manage ? `<select class="cycle-status" aria-label="Cycle status" onchange="setCycleStatus(${jsArg(cycle.id)}, this)">${["Not Started", "In Progress", "Completed"].map((item) => `<option ${item === (cycle.status || "Not Started") ? "selected" : ""}>${item}</option>`).join("")}</select><button class="button secondary small" onclick="editCycle(${jsArg(cycle.id)})">Edit details</button>${cycle.status === "Completed" ? "" : `<button class="button small" onclick="cycleWizard(${jsArg(cycle.id)})">+ Add test cases</button>`}` : status(cycle.status || "Not Started")}</div></div>
-      <div class="cycle-stats">
-        <div><span class="detail-label">Completion</span><strong>${summary.completion}%</strong>${progressBar(summary.completion, "Execution completion")}<small>${summary.executed} of ${summary.total} executed</small></div>
-        <div><span class="detail-label">Pass rate</span><strong>${summary.pass_rate}%</strong><small>of executed, excluding Not Applicable</small></div>
-        <div><span class="detail-label">Unassigned</span><strong id="statUnassigned" class="${cycleData.unassigned ? "warn-text" : ""}">${cycleData.unassigned}</strong><small>without an owner</small></div>
-        ${RUN_STATES.map((item) => `<div><span class="detail-label">${esc(item)}</span><strong>${summary.counts[item] || 0}</strong></div>`).join("")}
-      </div></section>`;
-}
-
 function cycleTabs(cycle) {
   const tabs = [["cases", "Test cases"], ["modules", "Assignments"], ["board", "Board"], ["history", "Cycle history"]];
   if (!can("assignments.manage")) tabs.splice(2, 1);
@@ -1741,21 +1689,6 @@ function filteredCycleRuns() {
   }).sort((a, b) => String(a.module_path).localeCompare(String(b.module_path)) || String(a.case_key).localeCompare(String(b.case_key), undefined, { numeric: true }));
 }
 
-function cycleRunRows() {
-  const manage = can("assignments.manage");
-  const removable = can("cycles.write");
-  const rows = filteredCycleRuns();
-  state.wsList = rows.map((run) => run.id);
-  if (!rows.length) return `<tr><td colspan="${manage ? 9 : 7}"><div class="empty">${cycleData.runs.length ? "No test cases match these filters." : "This cycle has no test cases yet."}</div></td></tr>`;
-  return rows.map((run) => `<tr class="${state.runSelection.has(run.id) ? "row-selected" : ""}">
-    ${manage ? `<td><input type="checkbox" class="run-check" data-run="${esc(run.id)}" ${state.runSelection.has(run.id) ? "checked" : ""} aria-label="Select ${esc(run.case_key)}"></td>` : ""}
-    <td class="case-id-cell"><button class="link case-key" onclick="openExecution(${jsArg(run.id)})">${esc(run.case_key || "—")}</button></td>
-    <td class="case-title-cell"><button class="link-plain" onclick="openExecution(${jsArg(run.id)})">${esc(run.case_title || "—")}</button></td>
-    <td>${esc(run.module_path || "—")}</td><td>${esc(run.priority || "—")}</td><td>${ownerChip(run)}</td><td>${runStatusSelect(run, run.case_key)}</td>
-    ${manage ? `<td class="row-actions">${removable && (run.status || "Not Run") === "Not Run" ? `<button class="link danger-text" onclick="removeRun(${jsArg(run.id)}, ${jsArg(run.case_key)})">Remove</button>` : ""}</td>` : ""}
-  </tr>`).join("");
-}
-
 function cycleCasesTab() {
   const manage = can("assignments.manage");
   const f = state.runFilter;
@@ -1768,7 +1701,7 @@ function cycleCasesTab() {
       <label class="filter"><span class="visually-hidden">Status</span><select id="runStatusFilter" aria-label="Status"><option value="">Status: All</option>${RUN_STATES.map((item) => `<option ${f.status === item ? "selected" : ""}>${item}</option>`).join("")}</select></label>
       <span class="muted"><strong id="runCount">${filteredCycleRuns().length}</strong> shown</span>
     </div>
-    <div class="table-wrap"><table class="case-table"><thead><tr>${manage ? '<th class="check-col"><input type="checkbox" id="runSelectAll" aria-label="Select all shown test cases"></th>' : ""}<th>ID</th><th>Test case</th><th>Module</th><th>Priority</th><th>Assigned to</th><th>Status</th>${manage ? "<th></th>" : ""}</tr></thead><tbody id="runRows">${cycleRunRows()}</tbody></table></div>
+    <div class="table-wrap"><table class="case-table exec-table"><thead><tr>${manage ? '<th class="check-col"><input type="checkbox" id="runSelectAll" aria-label="Select all shown test cases"></th>' : ""}<th class="id-col">ID</th><th>Test case</th><th>Module</th><th class="pri-col">Priority</th><th>Assigned to</th><th class="status-col">Status</th>${manage ? "<th></th>" : ""}</tr></thead><tbody id="runRows">${cycleRunRows()}</tbody></table></div>
     ${manage ? '<div id="runBulkBar" class="bulk-bar" role="toolbar" aria-label="Assignment actions" hidden></div>' : ""}
     <p class="muted panel-note">▤ follows its module's default owner · ✎ assigned individually (module changes leave it alone).</p>`;
 }
@@ -2953,6 +2886,119 @@ function bindRepositoryExtras() {
       viewCase(row.dataset.caseRow);
     };
   });
+}
+
+// Status order puts Blocked between Passed and Failed (easier to tell apart for colour-blind users).
+const RUN_SEGMENTS = [["Passed", "pass"], ["Blocked", "block"], ["Failed", "fail"], ["Not Applicable", "na"], ["In Progress", "prog"], ["Not Run", "open"]];
+
+function runCounts(runs) {
+  const counts = Object.fromEntries(RUN_STATES.map((item) => [item, 0]));
+  runs.forEach((run) => { counts[run.status || "Not Run"] = (counts[run.status || "Not Run"] || 0) + 1; });
+  return counts;
+}
+
+function stackedBar(counts, total, { thin = false, label = "Results" } = {}) {
+  const parts = RUN_SEGMENTS.filter(([key]) => counts[key]).map(([key, cls]) => `<span class="seg ${cls}" style="flex-grow:${counts[key]}" title="${esc(key)}: ${counts[key]}"></span>`).join("");
+  return `<div class="stack ${thin ? "thin" : ""}" role="img" aria-label="${esc(label)}: ${RUN_SEGMENTS.map(([key]) => `${counts[key] || 0} ${key}`).join(", ")} of ${total}">${parts || '<span class="seg open" style="flex-grow:1"></span>'}</div>`;
+}
+
+function progressLegend(counts) {
+  return `<ul class="stack-legend">${RUN_SEGMENTS.map(([key, cls]) => `<li><i class="dot ${cls}" aria-hidden="true"></i>${esc(key)} <strong>${counts[key] || 0}</strong></li>`).join("")}</ul>`;
+}
+
+function shortModule(path) {
+  const parts = String(path || "").split("/").filter(Boolean);
+  return parts.length ? `<span class="module-short" title="${esc(path)}">${parts.length > 1 ? '<span class="muted">… / </span>' : ""}${esc(parts.at(-1))}</span>` : '<span class="muted">—</span>';
+}
+
+function priorityTag(priority) {
+  return priority ? `<span class="priority ${PRIORITY_TONE[priority] || ""}"><i aria-hidden="true"></i>${esc(priority)}</span>` : '<span class="muted">—</span>';
+}
+
+async function execution() {
+  const projectId = encodeURIComponent(state.project.id);
+  const [runs, cycles, cases] = await Promise.all([
+    apiAll(`/test_runs?project_id=${projectId}`),
+    apiAll(`/test_cycles?project_id=${projectId}`),
+    apiAll(`/test_cases?project_id=${projectId}`),
+  ]);
+  const manage = can("cycles.write");
+  if (state.selectedCycle && !cycles.some((cycle) => cycle.id === state.selectedCycle)) state.selectedCycle = "";
+  const caseById = new Map(cases.map((testCase) => [testCase.id, testCase]));
+  const cycleById = new Map(cycles.map((cycle) => [cycle.id, cycle]));
+  const cycle = cycleById.get(state.selectedCycle);
+  let summary = null;
+  cycleData = null;
+  if (cycle) [summary, cycleData] = await Promise.all([api(`/cycles/${encodeURIComponent(cycle.id)}/summary`), api(`/cycles/${encodeURIComponent(cycle.id)}/assignments`)]);
+  const ordered = [...cycles].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+  const allCounts = runCounts(runs);
+  const cycleItems = ordered.map((item) => {
+    const mineRuns = runs.filter((run) => run.cycle_id === item.id);
+    const counts = runCounts(mineRuns);
+    const executed = mineRuns.length - counts["Not Run"] - counts["In Progress"];
+    const mine = mineRuns.filter((run) => run.assignee_id === state.user.id && ["Not Run", "In Progress"].includes(run.status || "Not Run")).length;
+    return `<button type="button" class="cycle-item ${state.selectedCycle === item.id ? "selected" : ""}" data-cycle="${esc(item.id)}" aria-label="${esc(item.name)}, ${executed} of ${mineRuns.length} executed${mine ? `, ${mine} open for you` : ""}">
+        <span class="cycle-item-top"><span class="cycle-item-name" title="${esc(item.name)}">${esc(item.name)}</span>${mine ? `<span class="module-chip mine">${mine} mine</span>` : ""}</span>
+        <span class="cycle-item-meta">${status(item.status || "Not Started")}${item.testing_type ? `<span>${esc(item.testing_type)}</span>` : ""}<span class="cycle-item-count">${executed}/${mineRuns.length}</span></span>
+        ${stackedBar(counts, mineRuns.length, { thin: true, label: item.name })}
+      </button>`;
+  }).join("");
+  const sidebar = `<aside class="panel cycle-list"><div class="tree-header"><strong>Test cycles</strong><div class="tree-actions">${manage ? '<button class="icon-button" title="Create test cycle" aria-label="Create test cycle" onclick="cycleWizard()">+</button>' : ""}<button class="icon-button" title="Hide cycles" aria-label="Hide cycles" onclick="toggleExecutionSidebar()">◀</button></div></div>
+      <div class="cycle-items"><button type="button" class="cycle-item all ${state.selectedCycle ? "" : "selected"}" data-cycle="" aria-label="All test runs, ${runs.length}"><span class="cycle-item-top"><span class="cycle-item-name">All test runs</span><span class="cycle-item-count">${runs.length}</span></span><span class="cycle-item-meta"><span>${cycles.length} cycle${cycles.length === 1 ? "" : "s"}</span></span></button>
+      ${cycleItems || `<div class="tree-empty">No cycles yet.${manage ? " Create one to start testing." : ""}</div>`}</div></aside>`;
+  const collapsed = state.executionSidebarCollapsed;
+  let main;
+  if (cycle) {
+    main = cycleOverview(cycle, summary, manage) + cycleTabs(cycle);
+  } else {
+    const sorted = [...runs].sort((a, b) => String(a.case_key || "").localeCompare(String(b.case_key || ""), undefined, { numeric: true }));
+    const executed = runs.length - allCounts["Not Run"] - allCounts["In Progress"];
+    const rows = sorted.map((run) => {
+      const testCase = caseById.get(run.test_case_id);
+      const key = run.case_key || (testCase ? caseLabel(testCase) : "—");
+      const title = plainTitle({ case_key: key, title: run.case_title || testCase?.title || "Test case not visible to you" });
+      return `<tr><td class="case-id-cell"><button class="case-id" onclick="openExecution(${jsArg(run.id)})">${esc(key)}</button></td><td class="case-title-cell"><button class="case-title" onclick="openExecution(${jsArg(run.id)})">${esc(title)}</button></td><td>${esc(cycleById.get(run.cycle_id)?.name || "—")}</td><td>${ownerChip(run)}</td><td>${runStatusSelect(run, key)}</td></tr>`;
+    }).join("");
+    main = `<section class="panel run-summary"><div class="run-summary-head"><div><h2>All test runs</h2><p class="muted">${runs.length} test case${runs.length === 1 ? "" : "s"} across ${cycles.length} cycle${cycles.length === 1 ? "" : "s"}. Select a cycle on the left to assign and execute.</p></div>
+        <div class="kpis"><div><strong>${runs.length ? Math.round(executed * 100 / runs.length) : 0}%</strong><span>executed</span></div><div><strong>${executed}</strong><span>of ${runs.length}</span></div></div></div>
+        ${stackedBar(allCounts, runs.length, { label: "All test runs" })}${progressLegend(allCounts)}</section>
+      <section class="panel"><div class="table-wrap"><table class="case-table exec-table"><thead><tr><th class="id-col">ID</th><th>Test case</th><th>Cycle</th><th>Assigned to</th><th class="status-col">Status</th></tr></thead><tbody>${rows || `<tr><td colspan="5"><div class="empty">${manage ? (cases.length ? 'No test cycles yet. <button class="link" onclick="cycleWizard()">Create a test cycle</button> to start testing.' : "Add and approve test cases in the repository, then create a test cycle.") : "No test cycles yet. Your admin creates cycles from the repository."}</div></td></tr>`}</tbody></table></div></section>`;
+  }
+  return `<div class="repo-head"><div><nav class="crumbs" aria-label="Breadcrumb"><span>${esc(state.project.key)}</span><span aria-hidden="true">›</span><button class="link-plain" onclick="state.selectedCycle=''; render()">Test Execution</button>${cycle ? `<span aria-hidden="true">›</span><span>${esc(cycle.name)}</span>` : ""}</nav><h1>Test Execution</h1></div>
+      ${manage ? '<div class="repo-actions"><button class="button small" onclick="cycleWizard()">+ Create test cycle</button></div>' : ""}</div>
+    <div class="exec-v2 ${collapsed ? "collapsed" : ""}">${collapsed ? `<button class="icon-button show-cycles" title="Show cycles" aria-label="Show cycles" onclick="toggleExecutionSidebar()">▶</button>` : sidebar}<div class="execution-main">${main}</div></div>`;
+}
+
+function cycleOverview(cycle, summary, manage) {
+  const counts = summary.counts;
+  const meta = [cycle.environment && ["Environment", cycle.environment], cycle.build && ["Build", cycle.build], (cycle.start_date || cycle.end_date) && ["Dates", `${cycle.start_date || "?"} → ${cycle.end_date || "?"}`]].filter(Boolean);
+  return `<section class="panel cycle-head">
+      <div class="cycle-head-top"><div class="cycle-title"><h2>${esc(cycle.name)}</h2>${cycle.testing_type ? `<span class="type-pill">${esc(cycle.testing_type)}</span>` : ""}${manage ? `<select class="cycle-status" aria-label="Cycle status" onchange="setCycleStatus(${jsArg(cycle.id)}, this)">${["Not Started", "In Progress", "Completed"].map((item) => `<option ${item === (cycle.status || "Not Started") ? "selected" : ""}>${item}</option>`).join("")}</select>` : status(cycle.status || "Not Started")}</div>
+        ${manage ? `<div class="heading-actions"><button class="button secondary small" onclick="editCycle(${jsArg(cycle.id)})">Edit details</button>${cycle.status === "Completed" ? "" : `<button class="button small" onclick="cycleWizard(${jsArg(cycle.id)})">+ Add test cases</button>`}</div>` : ""}</div>
+      <p class="cycle-meta">${meta.length ? meta.map(([label, value]) => `<span><span class="muted">${label}</span> ${esc(value)}</span>`).join("") : `<span class="muted">No environment, build or dates set${manage ? ' · <button class="link" onclick="editCycle(' + esc(JSON.stringify(cycle.id)) + ')">Add them</button>' : ""}</span>`}</p>
+      ${cycle.description ? `<p class="prewrap cycle-desc">${esc(cycle.description)}</p>` : ""}
+      <div class="kpis">
+        <div><strong>${summary.completion}%</strong><span>complete · ${summary.executed} of ${summary.total} executed</span></div>
+        <div><strong>${summary.executed ? `${summary.pass_rate}%` : "—"}</strong><span>pass rate</span></div>
+        <div><strong id="statUnassigned" class="${cycleData.unassigned ? "warn-text" : ""}">${cycleData.unassigned}</strong><span>unassigned</span></div>
+      </div>
+      ${stackedBar(counts, summary.total, { label: cycle.name })}${progressLegend(counts)}
+    </section>`;
+}
+
+function cycleRunRows() {
+  const manage = can("assignments.manage");
+  const removable = can("cycles.write");
+  const rows = filteredCycleRuns();
+  state.wsList = rows.map((run) => run.id);
+  if (!rows.length) return `<tr><td colspan="${manage ? 9 : 7}"><div class="empty">${cycleData.runs.length ? "No test cases match these filters." : "This cycle has no test cases yet."}</div></td></tr>`;
+  return rows.map((run) => `<tr class="${state.runSelection.has(run.id) ? "row-selected" : ""}">
+    ${manage ? `<td class="check-col"><input type="checkbox" class="run-check" data-run="${esc(run.id)}" ${state.runSelection.has(run.id) ? "checked" : ""} aria-label="Select ${esc(run.case_key)}"></td>` : ""}
+    <td class="case-id-cell"><button class="case-id" onclick="openExecution(${jsArg(run.id)})">${esc(run.case_key || "—")}</button></td>
+    <td class="case-title-cell"><button class="case-title" title="${esc(run.case_title || "")}" onclick="openExecution(${jsArg(run.id)})">${esc(plainTitle({ case_key: run.case_key, title: run.case_title || "—" }))}</button></td>
+    <td>${shortModule(run.module_path)}</td><td>${priorityTag(run.priority)}</td><td>${ownerChip(run)}</td><td>${runStatusSelect(run, run.case_key)}</td>
+    ${manage ? `<td class="row-actions">${removable && (run.status || "Not Run") === "Not Run" ? `<button class="icon-button remove-run" title="Remove from this cycle" aria-label="Remove ${esc(run.case_key)} from this cycle" onclick="removeRun(${jsArg(run.id)}, ${jsArg(run.case_key)})">✕</button>` : ""}</td>` : ""}
+  </tr>`).join("");
 }
 
 async function rebuildIndex() {
