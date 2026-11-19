@@ -814,74 +814,8 @@ function filteredCases() {
   }).sort((a, b) => String(a.case_key || "").localeCompare(String(b.case_key || ""), undefined, { numeric: true }));
 }
 
-function caseRowsHtml(cases) {
-  const canEdit = can("repository.write");
-  const canApprove = can("approvals.decide");
-  const colspan = canEdit ? 9 : 8;
-  if (!cases.length) {
-    const filtered = state.cases.length && (state.repoFilters.q || state.repoFilters.status || state.repoFilters.priority || state.repoFilters.type || state.repoFilters.last);
-    return `<tr><td colspan="${colspan}"><div class="empty">${filtered ? 'No test cases match these filters. <button class="link" onclick="clearRepoFilters()">Clear filters</button>' : state.selectedFolder ? "No test cases in this module." : canEdit ? "No test cases in this project yet. Import an Excel file or create your first test case." : "No approved test cases in this project yet."}</div></td></tr>`;
-  }
-  return cases.map((testCase) => {
-    const approval = testCase.status || "Draft";
-    const last = testCase.last_status || "Not Run";
-    const tags = Array.isArray(testCase.tags) ? testCase.tags.join(", ") : String(testCase.tags || "");
-    return `<tr data-case-row="${esc(testCase.id)}" class="${state.highlightedCaseIds.has(testCase.id) ? "imported-row" : ""} ${state.selectedCaseIds.has(testCase.id) ? "row-selected" : ""}">
-      ${canEdit ? `<td><input type="checkbox" class="case-check" data-check-case="${esc(testCase.id)}" ${state.selectedCaseIds.has(testCase.id) ? "checked" : ""} aria-label="Select ${esc(testCase.title)}"></td>` : ""}
-      <td class="case-id-cell"><button class="link case-key" onclick="viewCase(${jsArg(testCase.id)})">${esc(caseLabel(testCase))}</button></td>
-      <td class="case-title-cell"><button class="link-plain" onclick="viewCase(${jsArg(testCase.id)})">${esc(testCase.title)}</button></td>
-      <td>${canApprove ? `<select class="last-status-select approval-select status-${esc(approval.toLowerCase().replaceAll(" ", "-"))}" aria-label="Approval for ${esc(testCase.title)}" data-approval-case="${esc(testCase.id)}" data-previous-approval="${esc(approval)}">${APPROVAL_STATES.map((item) => `<option value="${item}" ${item === approval ? "selected" : ""}>${statusLabel(item)}</option>`).join("")}</select>` : status(approval)}</td>
-      <td>${canEdit ? `<select class="last-status-select status-${esc(last.toLowerCase().replaceAll(" ", "-"))}" aria-label="Last status for ${esc(testCase.title)}" data-last-status-case="${esc(testCase.id)}" data-previous-status="${esc(last)}">${RUN_STATES.map((item) => `<option ${item === last ? "selected" : ""}>${item}</option>`).join("")}</select>` : status(last)}</td>
-      <td>${esc(testCase.priority || "—")}</td><td>${esc(testCase.test_type || "—")}</td><td>v${esc(testCase.version)}</td>
-      <td>${esc(tags) || '<span class="muted">—</span>'}</td>
-    </tr>`;
-  }).join("");
-}
-
 function filterSelect(id, label, options, value) {
   return `<label class="filter"><span class="visually-hidden">${esc(label)}</span><select id="${id}" aria-label="${esc(label)}"><option value="">${esc(label)}: All</option>${options.map((option) => `<option value="${esc(option)}" ${option === value ? "selected" : ""}>${esc(statusLabel(option))}</option>`).join("")}</select></label>`;
-}
-
-async function repository() {
-  const projectId = encodeURIComponent(state.project.id);
-  [state.folders, state.cases] = await Promise.all([
-    apiAll(`/folders?project_id=${projectId}`),
-    apiAll(`/test_cases?project_id=${projectId}`),
-  ]);
-  const known = new Set(state.cases.map((testCase) => testCase.id));
-  state.selectedCaseIds = new Set([...state.selectedCaseIds].filter((id) => known.has(id)));
-  if (state.selectedFolder && !state.folders.some((folder) => folder.id === state.selectedFolder)) state.selectedFolder = "";
-  const canEdit = can("repository.write");
-  const f = state.repoFilters;
-  const types = [...new Set(["Manual", "Automated", ...state.cases.map((testCase) => testCase.test_type).filter(Boolean)])];
-  const selectedFolder = state.folders.find((folder) => folder.id === state.selectedFolder);
-  const collapsed = state.repoSidebarCollapsed;
-  const visible = filteredCases();
-  return heading("Test Repository", canEdit ? "The master source of truth for every module and test case." : "Approved modules and test cases available for execution.",
-    canEdit ? '<div class="heading-actions"><button class="button secondary" onclick="newFolder()">+ Module</button><button class="button" onclick="newCase()">+ New test case</button></div>' : "") +
-    `<div class="repo ${collapsed ? "repo-collapsed" : ""}">
-      ${collapsed ? "" : `<aside class="panel tree"><div class="tree-header"><div><strong>Modules</strong><small>${state.folders.length} module${state.folders.length === 1 ? "" : "s"}</small></div><div class="tree-actions">${canEdit ? '<button class="icon-button" title="Add module" aria-label="Add module" onclick="newFolder()">+</button>' : ""}<button class="icon-button" title="Collapse modules" aria-label="Collapse modules" onclick="toggleRepoSidebar()">◀</button></div></div><div class="tree-content">${folderTree(state.folders, state.cases)}</div></aside>`}
-      <section class="panel repository-cases">
-        <div class="toolbar repository-toolbar"><div class="repo-toolbar-left">${collapsed ? `<button class="icon-button" title="Show modules" aria-label="Show modules" onclick="toggleRepoSidebar()">▶</button>` : ""}<div><strong id="repoCount">${visible.length}</strong><span class="muted"> of ${state.cases.length} test case${state.cases.length === 1 ? "" : "s"}</span><span class="muted"> · ${esc(selectedFolder ? selectedFolder.path : "All modules")}</span>${selectedFolder && canEdit ? ` ${moduleChip(selectedFolder)}` : ""}</div></div>
-          <div class="repo-settings" ${canEdit ? "" : "hidden"}><button type="button" class="icon-button repo-settings-btn ${state.repoSettingsOpen ? "open" : ""}" title="Import and export" aria-label="Import and export" aria-haspopup="menu" aria-expanded="${state.repoSettingsOpen ? "true" : "false"}" aria-controls="repoSettingsMenu" onclick="toggleRepoSettings(event)">⚙</button><div id="repoSettingsMenu" class="repo-settings-menu" role="menu" ${state.repoSettingsOpen ? "" : "hidden"}><button type="button" class="folder-menu-item import-btn" onclick="triggerCaseImport()">⇪ Import Excel${selectedFolder ? " into this module" : ""}</button><a class="folder-menu-item" href="/api/export/test-cases.xlsx?project_id=${projectId}" download="TMExpert_Test_Cases.xlsx" onclick="collapseRepoSettings()">⇩ Export Excel</a><a class="folder-menu-item" href="/api/export/test-cases.xlsx?project_id=${projectId}&include_ids=true" download="TMExpert_Test_Cases_with_IDs.xlsx" onclick="collapseRepoSettings()">⇩ Export Excel with test case IDs</a><a class="folder-menu-item" href="/api/test-case-import-template.xlsx?project_id=${projectId}" download="TMExpert_Test_Case_Import_Template.xlsx" onclick="collapseRepoSettings()">▤ Download Excel template</a><button type="button" class="folder-menu-item" onclick="importHistoryPage()">☰ Import history</button></div>
-          <input id="caseImport" class="visually-hidden" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
-          </div>
-        </div>
-        <div class="filter-bar" role="search">
-          <label class="filter search-filter"><span class="visually-hidden">Search test cases</span><input id="repoSearch" type="search" placeholder="Search by ID, title or tag" value="${esc(f.q)}"></label>
-          ${filterSelect("repoStatus", "Approval", APPROVAL_STATES, f.status)}
-          ${filterSelect("repoPriority", "Priority", PRIORITIES, f.priority)}
-          ${filterSelect("repoType", "Type", types, f.type)}
-          ${filterSelect("repoLast", "Last status", RUN_STATES, f.last)}
-          <label class="filter checkbox-filter"><input id="repoIncludeSub" type="checkbox" aria-label="Include submodules" ${f.includeSub ? "checked" : ""}> Include submodules</label>
-        </div>
-        <div id="importFeedback" class="import-feedback" aria-live="polite">${state.importing ? `<div class="import-loading"><span class="spinner" aria-hidden="true"></span><span>Importing “${esc(state.importingFile)}” — reading Excel and adding cases. Please wait…</span></div>` : state.importFeedback}</div>
-        <div class="table-wrap"><table class="case-table"><thead><tr>${canEdit ? '<th class="check-col"><input type="checkbox" id="selectAllCases" aria-label="Select all visible cases"></th>' : ""}<th>ID</th><th>Test case</th><th>Approval</th><th>Last status</th><th>Priority</th><th>Type</th><th>Version</th><th>Tags</th></tr></thead>
-          <tbody id="caseRows">${caseRowsHtml(visible)}</tbody>
-        </table></div>
-        ${canEdit ? `<div id="bulkBar" class="bulk-bar" role="toolbar" aria-label="Bulk actions" hidden></div>` : ""}
-      </section>
-    </div>`;
 }
 
 function bindRepositoryToolbar() {
@@ -911,6 +845,7 @@ function refreshCaseTable() {
 }
 
 function bindCaseRows() {
+  bindRepositoryExtras();
   document.querySelectorAll(".last-status-select[data-last-status-case]").forEach((item) => { item.onchange = () => updateCaseLastStatus(item); });
   document.querySelectorAll(".last-status-select[data-approval-case]").forEach((item) => { item.onchange = () => updateCaseApprovalStatus(item); });
   document.querySelectorAll(".case-check").forEach((item) => {
@@ -2873,6 +2808,151 @@ async function loadAssignmentHistory() {
     const data = await api(`/cycles/${encodeURIComponent(state.selectedCycle)}/timeline`);
     $("#assignHistory").innerHTML = `<div class="tab-intro muted">Every result recorded and every assignment change in this cycle. Click a test case ID for its history across all cycles.</div>${timelineHtml(data)}`;
   } catch (error) { $("#assignHistory").innerHTML = `<div class="empty">${esc(error.message)}</div>`; }
+}
+
+const PRIORITY_TONE = { Critical: "critical", High: "high", Medium: "medium", Low: "low" };
+
+function plainTitle(testCase) {
+  // Titles often start with the ID ("SUR-TC-001 – …"); the ID already has its own column.
+  const key = String(testCase.case_key || "");
+  const title = String(testCase.title || "");
+  if (key && title.toLowerCase().startsWith(key.toLowerCase())) {
+    const rest = title.slice(key.length).replace(/^\s*[–—:|-]\s*/, "").trim();
+    if (rest) return rest;
+  }
+  return title;
+}
+
+function ago(value) {
+  if (!value) return "—";
+  const seconds = (Date.now() - new Date(value).getTime()) / 1000;
+  if (!Number.isFinite(seconds)) return "—";
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  if (seconds < 86400 * 30) return `${Math.floor(seconds / 86400)}d ago`;
+  return new Date(value).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
+}
+
+function caseRowsHtml(cases) {
+  const canEdit = can("repository.write");
+  const canApprove = can("approvals.decide");
+  const colspan = canEdit ? 9 : 8;
+  if (!cases.length) {
+    const filtered = state.cases.length && (state.repoFilters.q || state.repoFilters.status || state.repoFilters.priority || state.repoFilters.type || state.repoFilters.last);
+    return `<tr><td colspan="${colspan}"><div class="empty repo-empty">${filtered ? 'No test cases match these filters. <button class="link" onclick="clearRepoFilters()">Clear filters</button>' : state.selectedFolder ? "No test cases in this module yet." : canEdit ? "No test cases in this project yet. Import an Excel file or create your first test case." : "No approved test cases in this project yet."}</div></td></tr>`;
+  }
+  const paths = new Map(state.folders.map((folder) => [folder.id, folder.path || folder.name]));
+  const sorted = [...cases].sort((a, b) => String(paths.get(a.folder_id) || "").localeCompare(String(paths.get(b.folder_id) || "")) || String(a.case_key || "").localeCompare(String(b.case_key || ""), undefined, { numeric: true }));
+  const counts = new Map();
+  sorted.forEach((testCase) => counts.set(testCase.folder_id, (counts.get(testCase.folder_id) || 0) + 1));
+  let group = null;
+  return sorted.map((testCase) => {
+    let header = "";
+    if (testCase.folder_id !== group) {
+      group = testCase.folder_id;
+      const path = paths.get(group) || "No module";
+      const parts = path.split("/").filter(Boolean);
+      header = `<tr class="section-row"><td colspan="${colspan}"><span class="section-icon" aria-hidden="true">▰</span>${parts.length > 1 ? `<span class="section-parent">${esc(parts.slice(0, -1).join(" / "))} / </span>` : ""}<strong>${esc(parts.at(-1) || path)}</strong><span class="section-count">${counts.get(group)}</span></td></tr>`;
+    }
+    const approval = testCase.status || "Draft";
+    const last = testCase.last_status || "Not Run";
+    const tags = Array.isArray(testCase.tags) ? testCase.tags : String(testCase.tags || "").split(",").map((tag) => tag.trim()).filter(Boolean);
+    const priority = testCase.priority || "";
+    return `${header}<tr data-case-row="${esc(testCase.id)}" class="case-row ${state.highlightedCaseIds.has(testCase.id) ? "imported-row" : ""} ${state.selectedCaseIds.has(testCase.id) ? "row-selected" : ""}">
+      ${canEdit ? `<td class="check-col"><input type="checkbox" class="case-check" data-check-case="${esc(testCase.id)}" ${state.selectedCaseIds.has(testCase.id) ? "checked" : ""} aria-label="Select ${esc(testCase.title)}"></td>` : ""}
+      <td class="case-id-cell"><button class="case-id" onclick="viewCase(${jsArg(testCase.id)})">${esc(caseLabel(testCase))}</button></td>
+      <td class="case-title-cell"><button class="case-title" title="${esc(testCase.title)}" onclick="viewCase(${jsArg(testCase.id)})">${esc(plainTitle(testCase))}</button><span class="title-meta">${esc(testCase.test_type || "")}${testCase.test_type ? " · " : ""}v${esc(testCase.version)}</span>${tags.length ? `<span class="tag-list">${tags.slice(0, 4).map((tag) => `<span class="tag">${esc(tag)}</span>`).join("")}${tags.length > 4 ? `<span class="tag more">+${tags.length - 4}</span>` : ""}</span>` : ""}</td>
+      <td>${priority ? `<span class="priority ${PRIORITY_TONE[priority] || ""}"><i aria-hidden="true"></i>${esc(priority)}</span>` : '<span class="muted">—</span>'}</td>
+      <td class="type-cell">${esc(testCase.test_type || "—")}</td>
+      <td>${canApprove ? `<select class="last-status-select approval-select status-${esc(approval.toLowerCase().replaceAll(" ", "-"))}" aria-label="Approval for ${esc(testCase.title)}" data-approval-case="${esc(testCase.id)}" data-previous-approval="${esc(approval)}">${APPROVAL_STATES.map((item) => `<option value="${item}" ${item === approval ? "selected" : ""}>${statusLabel(item)}</option>`).join("")}</select>` : status(approval)}</td>
+      <td>${canEdit ? `<select class="last-status-select status-${esc(last.toLowerCase().replaceAll(" ", "-"))}" aria-label="Last result for ${esc(testCase.title)}" data-last-status-case="${esc(testCase.id)}" data-previous-status="${esc(last)}">${RUN_STATES.map((item) => `<option ${item === last ? "selected" : ""}>${item}</option>`).join("")}</select>` : status(last)}</td>
+      <td class="num-cell">v${esc(testCase.version)}</td>
+      <td class="date-cell" title="${esc(fmtDate(testCase.updated_at))}">${esc(ago(testCase.updated_at))}</td>
+    </tr>`;
+  }).join("");
+}
+
+async function repository() {
+  const projectId = encodeURIComponent(state.project.id);
+  [state.folders, state.cases] = await Promise.all([
+    apiAll(`/folders?project_id=${projectId}`),
+    apiAll(`/test_cases?project_id=${projectId}`),
+  ]);
+  const known = new Set(state.cases.map((testCase) => testCase.id));
+  state.selectedCaseIds = new Set([...state.selectedCaseIds].filter((id) => known.has(id)));
+  if (state.selectedFolder && !state.folders.some((folder) => folder.id === state.selectedFolder)) state.selectedFolder = "";
+  const canEdit = can("repository.write");
+  const f = state.repoFilters;
+  const types = [...new Set(["Manual", "Automated", ...state.cases.map((testCase) => testCase.test_type).filter(Boolean)])];
+  const selectedFolder = state.folders.find((folder) => folder.id === state.selectedFolder);
+  const collapsed = state.repoSidebarCollapsed;
+  const visible = filteredCases();
+  const filtersOn = Boolean(f.q || f.status || f.priority || f.type || f.last);
+  const approved = state.cases.filter((testCase) => testCase.status === "Approved").length;
+  const crumbs = selectedFolder ? (selectedFolder.path || selectedFolder.name).split("/").filter(Boolean) : [];
+  const actions = canEdit ? `<div class="repo-actions">
+      <button class="button secondary small" onclick="triggerCaseImport()">⇪ Import</button>
+      <div class="repo-settings"><button type="button" class="button secondary small repo-settings-btn ${state.repoSettingsOpen ? "open" : ""}" aria-haspopup="menu" aria-expanded="${state.repoSettingsOpen ? "true" : "false"}" aria-controls="repoSettingsMenu" onclick="toggleRepoSettings(event)">⇩ Export ▾</button>
+        <div id="repoSettingsMenu" class="repo-settings-menu" role="menu" ${state.repoSettingsOpen ? "" : "hidden"}><a class="folder-menu-item" href="/api/export/test-cases.xlsx?project_id=${projectId}" download="TMExpert_Test_Cases.xlsx" onclick="collapseRepoSettings()">Export to Excel</a><a class="folder-menu-item" href="/api/export/test-cases.xlsx?project_id=${projectId}&include_ids=true" download="TMExpert_Test_Cases_with_IDs.xlsx" onclick="collapseRepoSettings()">Export to Excel with test case IDs</a><a class="folder-menu-item" href="/api/test-case-import-template.xlsx?project_id=${projectId}" download="TMExpert_Test_Case_Import_Template.xlsx" onclick="collapseRepoSettings()">Download import template</a><button type="button" class="folder-menu-item" onclick="importHistoryPage()">Import history</button></div>
+        <input id="caseImport" class="visually-hidden" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></div>
+      <button class="button secondary small" onclick="newFolder()">+ Module</button>
+      <button class="button small" onclick="newCase()">+ Test case</button></div>` : "";
+  return `<div class="repo-head">
+      <div><nav class="crumbs" aria-label="Breadcrumb"><span>${esc(state.project.key)}</span><span aria-hidden="true">›</span><button class="link-plain" onclick="state.selectedFolder=''; render()">Test Repository</button>${crumbs.map((part) => `<span aria-hidden="true">›</span><span>${esc(part)}</span>`).join("")}</nav>
+        <h1>${esc(selectedFolder ? selectedFolder.name : "Test Repository")}</h1>
+        <p class="repo-stats"><span><strong>${state.cases.length}</strong> test cases</span><span><strong>${approved}</strong> approved</span><span><strong>${state.folders.length}</strong> modules</span>${selectedFolder && canEdit ? `<span>${moduleChip(selectedFolder) || '<span class="module-chip ok">Approved module</span>'}</span>` : ""}</p></div>
+      ${actions}</div>
+    <div class="repo repo-v2 ${collapsed ? "repo-collapsed" : ""}">
+      ${collapsed ? "" : `<aside class="panel tree"><div class="tree-header"><strong>Modules</strong><div class="tree-actions">${canEdit ? '<button class="icon-button" title="Add module" aria-label="Add module" onclick="newFolder()">+</button>' : ""}<button class="icon-button" title="Hide modules" aria-label="Hide modules" onclick="toggleRepoSidebar()">◀</button></div></div>
+        <div class="tree-search"><input id="moduleSearch" type="search" placeholder="Filter modules" aria-label="Filter modules" value="${esc(state.moduleQuery || "")}"></div>
+        <div class="tree-content">${folderTree(state.folders, state.cases)}</div></aside>`}
+      <section class="panel repository-cases">
+        <div class="filter-bar repo-filters" role="search">
+          ${collapsed ? `<button class="icon-button" title="Show modules" aria-label="Show modules" onclick="toggleRepoSidebar()">▶</button>` : ""}
+          <label class="filter search-filter"><span class="visually-hidden">Search test cases</span><input id="repoSearch" type="search" placeholder="Search ID, title or tag…" value="${esc(f.q)}"></label>
+          ${filterSelect("repoPriority", "Priority", PRIORITIES, f.priority)}
+          ${filterSelect("repoType", "Type", types, f.type)}
+          ${filterSelect("repoStatus", "Approval", APPROVAL_STATES, f.status)}
+          ${filterSelect("repoLast", "Last result", RUN_STATES, f.last)}
+          <label class="filter checkbox-filter"><input id="repoIncludeSub" type="checkbox" aria-label="Include submodules" ${f.includeSub ? "checked" : ""}> Submodules</label>
+          <span class="repo-count"><strong id="repoCount">${visible.length}</strong> of ${state.cases.length}${filtersOn ? ' · <button class="link" onclick="clearRepoFilters()">Clear</button>' : ""}</span>
+        </div>
+        <div id="importFeedback" class="import-feedback" aria-live="polite">${state.importing ? `<div class="import-loading"><span class="spinner" aria-hidden="true"></span><span>Importing “${esc(state.importingFile)}” — reading Excel and adding cases. Please wait…</span></div>` : state.importFeedback}</div>
+        <div class="table-wrap repo-table-wrap"><table class="case-table repo-table"><thead><tr>${canEdit ? '<th class="check-col"><input type="checkbox" id="selectAllCases" aria-label="Select all visible cases"></th>' : ""}<th class="id-col">ID</th><th>Title</th><th class="pri-col">Priority</th><th class="type-col">Type</th><th class="status-col">Approval</th><th class="status-col">Last result</th><th class="num-col">Ver.</th><th class="date-col">Updated</th></tr></thead>
+          <tbody id="caseRows">${caseRowsHtml(visible)}</tbody>
+        </table></div>
+        ${canEdit ? `<div id="bulkBar" class="bulk-bar" role="toolbar" aria-label="Bulk actions" hidden></div>` : ""}
+      </section>
+    </div>`;
+}
+
+function bindRepositoryExtras() {
+  const search = $("#moduleSearch");
+  if (search) {
+    const apply = () => {
+      state.moduleQuery = search.value;
+      const needle = search.value.trim().toLowerCase();
+      const byId = new Map(state.folders.map((folder) => [folder.id, folder]));
+      const keep = new Set();
+      state.folders.forEach((folder) => {
+        if (needle && !String(folder.name).toLowerCase().includes(needle)) return;
+        for (let current = folder; current; current = byId.get(current.parent_id)) keep.add(current.id);
+      });
+      document.querySelectorAll(".tree .tree-branch").forEach((branch) => {
+        const id = branch.querySelector(".tree-node[data-folder]")?.dataset.folder;
+        branch.hidden = Boolean(needle) && !keep.has(id);
+      });
+    };
+    search.oninput = apply;
+    if (search.value) apply();
+  }
+  document.querySelectorAll("tr.case-row").forEach((row) => {
+    row.onclick = (event) => {
+      if (event.target.closest("button, select, input, a, label")) return;
+      viewCase(row.dataset.caseRow);
+    };
+  });
 }
 
 async function rebuildIndex() {

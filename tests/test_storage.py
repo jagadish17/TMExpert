@@ -16,9 +16,14 @@ class ExcelStorageTests(unittest.TestCase):
     def test_port_resolution_accepts_explicit_port_and_uses_next_free_port(self):
         saved = os.environ.get("TMEXPERT_PORT")
         try:
-            os.environ["TMEXPERT_PORT"] = "8788"
-            self.assertEqual(server.resolve_port("8788"), 8788)
-            self.assertGreaterEqual(server.resolve_port("0"), 1024)
+            import socket
+            free = server.resolve_port("0")  # a port that is free right now
+            self.assertGreaterEqual(free, 1024)
+            os.environ["TMEXPERT_PORT"] = str(free)
+            self.assertEqual(server.resolve_port(str(free)), free)
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as busy:  # occupy it: the next free port is chosen
+                busy.bind(("127.0.0.1", free)); busy.listen()
+                self.assertGreater(server.resolve_port(str(free)), free)
         finally:
             if saved is None:
                 os.environ.pop("TMEXPERT_PORT", None)
