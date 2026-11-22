@@ -19,7 +19,7 @@ def b64(data: bytes) -> str:
 class ExecutionTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.httpd = server.make_server("127.0.0.1", 0, self.tmp.name)
+        self.httpd = server.make_server("127.0.0.1", 0, self.tmp.name, approvals=True)  # these tests cover the approval workflow
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True); self.thread.start()
         self.base = f"http://127.0.0.1:{self.httpd.server_address[1]}"
         self.store = self.httpd.app.store

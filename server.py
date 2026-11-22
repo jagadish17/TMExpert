@@ -44,9 +44,12 @@ def resolve_host() -> str:
 
 
 class App:
-    def __init__(self, data_dir: str | Path):
+    def __init__(self, data_dir: str | Path, approvals: bool = False):
         self.store = ExcelStorageService(data_dir)
         self.service = TMExpertService(self.store); self.service.bootstrap()
+        # The approval workflow is switched off: every active test case and module
+        # is available to the team and to cycles. Tests can switch it back on.
+        self.service.workflow.approvals_enabled = approvals
         self.auth = AuthService(self.store)
         self.cycles = CycleService(self.store, self.service.workflow)
         self.assignments = AssignmentService(self.store)
@@ -569,9 +572,9 @@ class Handler(SimpleHTTPRequestHandler):
         self._send(200, target.read_bytes(), mimetypes.guess_type(str(target))[0] or "application/octet-stream")
 
 
-def make_server(host: str, port: int, data_dir: str | Path = DATA, cert: str = "", key: str = "") -> ThreadingHTTPServer:
+def make_server(host: str, port: int, data_dir: str | Path = DATA, cert: str = "", key: str = "", approvals: bool = False) -> ThreadingHTTPServer:
     server = ThreadingHTTPServer((host, port), Handler)
-    server.app = App(data_dir)  # type: ignore[attr-defined]
+    server.app = App(data_dir, approvals)  # type: ignore[attr-defined]
     server.tls = False  # type: ignore[attr-defined]
     if cert and key:  # optional HTTPS with your own certificate
         import ssl

@@ -234,7 +234,7 @@ class TMExpertService:
             return existing  # no content change: no new version, approval untouched
         next_version = str(int(existing.get("version", "0") or 0) + 1)
         field_changes["version"] = next_version
-        if existing.get("status") in {"Approved", "Rejected"}:
+        if self.workflow.approvals_enabled and existing.get("status") in {"Approved", "Rejected"}:
             field_changes["status"] = "Draft"  # revised content must be approved again
         updated = self.store.update("test_cases", record_id, field_changes, actor_id)
         if steps:

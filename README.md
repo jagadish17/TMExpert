@@ -26,11 +26,11 @@ their own when they first sign in.
 
 | Role | Can do |
 |---|---|
-| Admin | Everything: repository, approvals, cycles, runs, users, exports, audit history. |
-| Team Member | See approved test cases, projects, plans and cycles; record execution status. |
+| Admin | Everything: repository, cycles, runs, users, exports, audit history. |
+| Team Member | See test cases, projects, plans and cycles; record execution status. |
 
 The server checks permissions on every request; hiding buttons is only cosmetic.
-Team members see only test cases whose approval status is **Approved**.
+Team members see every active (not archived) test case.
 
 Passwords are stored as salted PBKDF2 hashes in `Users.xlsx`. Older unsalted
 hashes still work once and are upgraded at the next sign-in. Passwords never
@@ -123,31 +123,26 @@ On import, the repository workbooks are backed up first, the uploaded file is ke
 in `application-data/imports/`, and the import is recorded in
 `history/Import_History.xlsx` (who, when, file name and SHA-256, sheet, counts).
 
-## Modules and approvals
+## Modules
 
 Repository folders are **modules** (top level) and **submodules** (nested).
-Test cases and modules both go through an approval lifecycle:
 
-Draft → Pending Approval → Approved or Rejected (a reason is required)
-
-- A rejected test case is edited (it returns to Draft) and submitted again.
-- Editing an approved test case creates a new version and returns it to Draft
-  until it is approved again. Cycles that already use the old version are not affected.
-- Admins can also deprecate a test case and later restore it.
-- Every step is recorded in `history/Approvals.xlsx` with who, when, which
-  version and the comment. The stored status values (`Draft`, `In Review`,
-  `Approved`, `Rejected`, `Deprecated`) are unchanged; `In Review` is shown as
-  "Pending Approval".
-- Team members see a test case only when it is Approved **and** its module and
-  every parent module are Approved. Modules that existed before this version
-  were marked Approved; new modules start as Draft.
+- **There is no approval step.** Every active test case and module is visible to
+  the whole team and can be added to cycles, whatever status it was saved with.
+  Archived test cases (and any deprecated earlier) are not added to new cycles.
+- Editing a test case creates a new version. Cycles that already use the old
+  version are not affected.
 - Saving a test case with the same title as another one in the same module asks
   for confirmation. Excel imports report such rows and offer "Import anyway".
-- Bulk actions: submit, approve, reject, move, set priority, add/remove tags,
-  deprecate and archive. Moving, priority and tag changes do not create a new version.
+- Bulk actions: move, set priority, add/remove tags and archive. These do not
+  create a new version.
 - Module paths are checked at startup and corrected if a module was moved
   without its path being updated. Excel files that still use the older, shorter
   path continue to import when it names exactly one module.
+- The old approval workflow (Draft → Pending → Approved/Rejected, recorded in
+  `history/Approvals.xlsx`) is still in the code and its history is kept, but it
+  is switched off (`App(..., approvals=False)` in `server.py`). The tests switch it
+  on to keep it covered.
 
 ## Test cycles
 
@@ -162,9 +157,8 @@ Admins create cycles from **Test Execution → Create test cycle** in four steps
 3. **Preview** exactly what will be added, grouped by module.
 4. **Confirm** and create.
 
-- Only Approved test cases in Approved modules are eligible. Deprecated, Rejected
-  and archived cases are never added. Admins can explicitly include Draft and
-  Pending cases.
+- Every active test case is eligible. Archived (and earlier deprecated) cases
+  are never added.
 - A test case can be in a cycle only once.
 - **Snapshots:** each test case is added at its current version. The cycle keeps
   the ID, title, module path, priority and type as they were then, and the steps of
@@ -289,7 +283,7 @@ The **Dashboard** is computed from the workbooks each time it opens.
   (includes submodules), member, and a date range. When no cycle is chosen, the
   date range selects cycles that **start** in the range; it also sets the window of
   the "executions per day" chart.
-- Headline numbers: test cases (approved, pending approval), active and completed
+- Headline numbers: test cases and modules, active and completed
   cycles, executed / total with completion %, pass rate (passed ÷ executed,
   excluding Not Applicable), passed, failed, blocked and not run.
 - **Regression trend**: regressions, new failures and reopened failures for each
@@ -354,7 +348,7 @@ office network or VPN. Keep the window open while people use TMExpert.
 ## Current product scope
 
 Implemented: sign-in and roles; master repository with modules, versions,
-approvals, duplicate detection and attachments; Excel import preview, validation,
+duplicate detection and attachments; Excel import preview, validation,
 history and compatible export; test cycles with snapshots; module and individual
 assignment with a drag-and-drop board; My Work and execution with evidence and full
 history; cycle comparison; dashboard and Excel reports; tamper-evident audit log;

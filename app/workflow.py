@@ -45,8 +45,11 @@ def label(status: str) -> str:
 
 
 class RepositoryWorkflow:
-    def __init__(self, store: ExcelStorageService):
+    def __init__(self, store: ExcelStorageService, approvals_enabled: bool = True):
         self.store = store
+        # When approvals are off, every active test case and module is usable by the
+        # team and in cycles; only archived (and previously deprecated) cases are not.
+        self.approvals_enabled = approvals_enabled
 
     # ------------------------------------------------------------- lookups
     def _folders(self, project_id: str = "") -> dict[str, dict[str, Any]]:
@@ -56,8 +59,8 @@ class RepositoryWorkflow:
         names = {u["id"]: u.get("name", "") for u in self.store.list("users", page_size=1_000_000, include_archived=True)["items"]}
         names["system"] = "System"
         return names
-    @staticmethod
-    def folder_approved(folder: dict[str, Any] | None) -> bool:
+    def folder_approved(self, folder: dict[str, Any] | None) -> bool:
+        if not self.approvals_enabled: return bool(folder)
         return bool(folder) and folder.get("approval_status") in ("", "Approved", None)
     def folder_chain_approved(self, folder_id: str, folders: dict[str, dict[str, Any]]) -> bool:
         seen: set[str] = set()
@@ -72,7 +75,9 @@ class RepositoryWorkflow:
             if current is None: return False  # parent archived or missing
         return True
     def case_visible_to_team(self, case: dict[str, Any] | None, folders: dict[str, dict[str, Any]] | None = None) -> bool:
-        if not case or case.get("archived") is True or case.get("status") != "Approved": return False
+        if not case or case.get("archived") is True: return False
+        if self.approvals_enabled and case.get("status") != "Approved": return False
+        if not self.approvals_enabled and case.get("status") == "Deprecated": return False
         folders = folders if folders is not None else self._folders(str(case.get("project_id", "")))
         return self.folder_chain_approved(str(case.get("folder_id", "")), folders)
     def visible_case(self, case_id: str) -> bool:

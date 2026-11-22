@@ -275,12 +275,10 @@ async function render() {
     else if (state.view === "compare") content = await compareView();
     else if (state.view === "repository") content = await repository();
     else if (state.view === "projects") content = projectTable();
-    else if (state.view === "requirements") content = await requirementsPage();
     else if (state.view === "plans") content = await plansPage();
     else if (state.view === "suites") content = await suitesPage();
     else if (state.view === "defects") content = await defectsPage(); else if (state.view === "execution") content = await execution();
     else if (state.view === "reports") content = await reportsPage();
-    else if (state.view === "approvals" && can("approvals.decide")) content = await approvalsPage();
     else if (state.view === "audit") content = await auditPage();
     else if (state.view === "admin" && isAdmin()) content = await administration();
     else { state.view = "dashboard"; content = await dashboard(); }
@@ -695,7 +693,7 @@ async function administration() {
   return heading("Administration", "Team members, roles, and Excel storage.", '<button class="button" onclick="editUser(\'\')">+ Add team member</button>') +
     `<section class="panel"><div class="panel-head"><h2>Team members</h2><span class="muted">${users.filter((user) => user.status === "Active").length} active of ${users.length}</span></div>
       <div class="table-wrap"><table><thead><tr><th>Member</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
-      <p class="muted panel-note"><strong>Admin</strong> can manage the repository, approvals, cycles and users. <strong>Team Member</strong> sees approved test cases and records execution results. Permissions are enforced by the server.</p></section>
+      <p class="muted panel-note"><strong>Admin</strong> can manage the repository, cycles and users. <strong>Team Member</strong> sees the test cases and records execution results. Permissions are enforced by the server.</p></section>
     <section class="panel admin-storage"><div class="toolbar"><strong>Excel storage</strong><button class="button secondary small" onclick="rebuildIndex()">Rebuild search index</button></div><div class="coverage"><div class="legend"><span>Persistence engine</span><strong>Managed .xlsx workbooks</strong></div><p class="muted">Every change is validated, written atomically, and recorded in the audit history with previous and new values. Workbooks are backed up before bulk changes and at most every 5 minutes otherwise.</p></div></section>`;
 }
 
@@ -774,9 +772,8 @@ function folderSubtree(folderId) {
   return ids;
 }
 
-function moduleChip(folder) {
-  const value = folder.approval_status || "Approved";
-  return value === "Approved" ? "" : `<span class="module-chip ${esc(value.toLowerCase().replaceAll(" ", "-"))}" title="Module ${esc(statusLabel(value))}">${esc(value === "In Review" ? "Pending" : value)}</span>`;
+function moduleChip() {
+  return ""; // approvals are switched off: modules have no approval state
 }
 
 const ICON_FOLDER = '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 3.5a1 1 0 0 1 1-1h3.6l1.4 1.6h6a1 1 0 0 1 1 1v7.4a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z" fill="currentColor"/></svg>';
@@ -802,11 +799,10 @@ function folderTree(folders, cases) {
     const collapsed = state.collapsedFolders.has(folder.id);
     const own = direct.get(folder.id) || 0, all = total(folder.id);
     const countText = kids.length && all !== own ? `${own} here · ${all} including submodules` : `${own} test case${own === 1 ? "" : "s"}`;
-    const approval = folder.approval_status || "Approved";
-    const badge = editable && approval !== "Approved" ? `<span class="mod-badge ${esc(approval.toLowerCase().replaceAll(" ", "-"))}">${esc(approval === "In Review" ? "Pending" : approval)}</span>` : "";
+    const badge = "";
     rows.push(`<div class="tree-branch mtree-row" style="--depth:${Math.min(depth, 10)}">
       ${kids.length ? `<button type="button" class="tree-toggle mtree-toggle" data-toggle-folder="${esc(folder.id)}" aria-label="${collapsed ? "Expand" : "Collapse"} ${esc(folder.name)}" aria-expanded="${!collapsed}">${ICON_CHEVRON}</button>` : '<span class="mtree-toggle" aria-hidden="true"></span>'}
-      <button type="button" class="tree-node mtree-node ${state.selectedFolder === folder.id ? "selected" : ""}" data-folder="${esc(folder.id)}" data-folder-name="${esc(folder.name)}" aria-label="${esc(folder.name)}, ${countText}${badge ? `, module ${esc(statusLabel(approval))}` : ""}" title="${esc(folder.path || folder.name)} — ${countText}" ${editable ? 'draggable="true"' : ""}>
+      <button type="button" class="tree-node mtree-node ${state.selectedFolder === folder.id ? "selected" : ""}" data-folder="${esc(folder.id)}" data-folder-name="${esc(folder.name)}" aria-label="${esc(folder.name)}, ${countText}" title="${esc(folder.path || folder.name)} — ${countText}" ${editable ? 'draggable="true"' : ""}>
         <span class="mtree-icon">${ICON_FOLDER}</span><span class="tree-label mtree-label">${esc(folder.name)}</span>${badge}<span class="mtree-count ${own ? "" : "zero"}">${own || (kids.length ? "" : "0")}</span>
       </button></div>`);
     if (kids.length && !collapsed) walk(folder.id, depth + 1);
@@ -818,7 +814,7 @@ function folderTree(folders, cases) {
       ${hasRootKids ? `<button type="button" class="tree-toggle mtree-toggle" data-toggle-folder="" aria-label="${rootCollapsed ? "Expand" : "Collapse"} all modules" aria-expanded="${!rootCollapsed}">${ICON_CHEVRON}</button>` : '<span class="mtree-toggle" aria-hidden="true"></span>'}
       <button type="button" class="tree-node mtree-node ${state.selectedFolder ? "" : "selected"}" data-folder="" data-folder-name="${esc(state.project.name)}" aria-label="All test cases in ${esc(state.project.name)}, ${cases.length}" title="Every test case in ${esc(state.project.name)}">
         <span class="mtree-icon">${ICON_ALL}</span><span class="tree-label mtree-label">All test cases</span><span class="mtree-count">${cases.length}</span></button></div>`;
-  const empty = !rows.length && !rootCollapsed ? `<div class="tree-empty">${editable ? "No modules yet. Add one to organize your test cases." : "No approved modules yet."}</div>` : "";
+  const empty = !rows.length && !rootCollapsed ? `<div class="tree-empty">${editable ? "No modules yet. Add one to organize your test cases." : "No modules yet."}</div>` : "";
   return `<div class="mtree" role="tree">${root}${rows.join("")}${empty}</div>`;
 }
 
@@ -847,7 +843,7 @@ function bindRepositoryToolbar() {
   if (!search) return;
   let timer = null;
   search.oninput = () => { clearTimeout(timer); timer = setTimeout(() => { state.repoFilters.q = search.value; refreshCaseTable(); }, 150); };
-  [["repoStatus", "status"], ["repoPriority", "priority"], ["repoType", "type"], ["repoLast", "last"]].forEach(([id, key]) => {
+  [["repoPriority", "priority"], ["repoType", "type"], ["repoLast", "last"]].forEach(([id, key]) => {
     $(`#${id}`).onchange = (event) => { state.repoFilters[key] = event.target.value; refreshCaseTable(); };
   });
   $("#repoIncludeSub").onchange = (event) => { state.repoFilters.includeSub = event.target.checked; refreshCaseTable(); };
@@ -913,15 +909,11 @@ function updateSelectedNote() {
   if (!bar) return;
   bar.hidden = ids.length === 0;
   if (!ids.length) { bar.innerHTML = ""; return; }
-  const approver = can("approvals.decide");
   bar.innerHTML = `<strong>${ids.length} selected</strong>
-    <button class="button secondary small" onclick="bulkAction('submit')">Submit for approval</button>
-    ${approver ? '<button class="button secondary small" onclick="bulkAction(\'approve\')">Approve</button><button class="button secondary small" onclick="bulkAction(\'reject\')">Reject</button>' : ""}
     <button class="button secondary small" onclick="bulkAction('move')">Move to module</button>
     <button class="button secondary small" onclick="bulkAction('set_priority')">Set priority</button>
     <button class="button secondary small" onclick="bulkAction('add_tags')">Add tags</button>
     <button class="button secondary small" onclick="bulkAction('remove_tags')">Remove tags</button>
-    ${approver ? '<button class="button secondary small" onclick="bulkAction(\'deprecate\')">Deprecate</button>' : ""}
     <button class="button secondary small danger-text" onclick="requestDeleteSelectedCases()">Archive</button>
     <button class="link" onclick="clearSelection()">Clear selection</button>`;
 }
@@ -1003,14 +995,9 @@ function showFolderMenu(x, y, folderId) {
   const menu = $("#folderContextMenu");
   if (!menu) return;
   const folder = state.folders.find((item) => item.id === folderId);
-  const approval = folder ? folder.approval_status || "Approved" : "";
   const items = [["new-sub", folder ? "New submodule" : "New module"], ["new-case", "New test case"]];
   if (folder) {
     items.push(["rename", "Rename module"]);
-    if (["Draft", "Rejected"].includes(approval)) items.push(["submit", "Submit module for approval"]);
-    if (can("approvals.decide") && approval !== "Approved") items.push(["approve", "Approve module"]);
-    if (can("approvals.decide") && ["In Review", "Draft"].includes(approval)) items.push(["reject", "Reject module"]);
-    if (approval !== "Draft") items.push(["draft", "Return module to draft"]);
     items.push(["archive", "Archive module"]);
   }
   menu.innerHTML = items.map(([action, text]) => `<button type="button" class="folder-menu-item ${action === "archive" || action === "reject" ? "danger" : ""}" data-action="${action}">${esc(text)}</button>`).join("");
@@ -1026,7 +1013,6 @@ function showFolderMenu(x, y, folderId) {
       else if (action === "new-case") { state.selectedFolder = folderId; newCase(); }
       else if (action === "rename") renameFolder(folderId);
       else if (action === "archive") requestDeleteFolder(folderId);
-      else folderTransition(folderId, { submit: "In Review", approve: "Approved", reject: "Rejected", draft: "Draft" }[action]);
     };
   });
 }
@@ -1132,13 +1118,11 @@ async function caseForm(existing = null, steps = []) {
     return;
   }
   const editing = Boolean(existing);
-  const requirements = await apiAll(`/requirements?project_id=${encodeURIComponent(state.project.id)}`).catch(() => []);
-  const linkedReqs = new Set(existing?.requirement_ids || []);
   const automation = existing?.automation_status || "Not Automated";
   const value = (key) => esc(existing?.[key] ?? "");
   const types = [...new Set(["Manual", "Automated", existing?.test_type].filter(Boolean))];
   const tags = Array.isArray(existing?.tags) ? existing.tags.join(", ") : existing?.tags || "";
-  const approvedNote = editing && ["Approved", "Rejected"].includes(existing.status) ? `<div class="notice">Saving content changes creates version ${Number(existing.version) + 1} and returns this ${statusLabel(existing.status).toLowerCase()} test case to Draft for re-approval. Cycles that already use version ${esc(existing.version)} are not affected.</div>` : "";
+  const approvedNote = editing ? `<div class="notice">Saving content changes creates version ${Number(existing.version) + 1}. Cycles that already use version ${esc(existing.version)} are not affected.</div>` : "";
   $("#app").innerHTML = heading(editing ? `Edit ${caseLabel(existing)}` : "New test case", editing ? existing.title : "Create a structured, versioned test case.", `<button class="button secondary" onclick="${editing ? `viewCase(${jsArg(existing.id)})` : "go('repository')"}">Cancel</button>`) +
     `<section class="panel form-panel">${approvedNote}<form id="caseForm"><div class="form-grid">
       <div class="field full"><label>Title *</label><input name="title" required maxlength="200" value="${value("title")}" placeholder="Describe the behavior being verified"></div>
@@ -1148,9 +1132,6 @@ async function caseForm(existing = null, steps = []) {
       <div class="field"><label>Tags</label><input name="tags" value="${esc(tags)}" placeholder="smoke, regression"></div>
       <div class="field"><label>Automation status</label><select name="automation_status">${["Not Automated", "In Progress", "Automated", "Not Applicable"].map((item) => `<option ${item === automation ? "selected" : ""}>${item}</option>`).join("")}</select></div>
       <div class="field"><label>Automation reference</label><input name="automation_reference" maxlength="300" value="${value("automation_reference")}" placeholder="e.g. tests/login.spec.ts"></div>
-      <fieldset class="field full req-picker"><legend>Requirements covered${requirements.length ? ` <input type="search" class="req-filter" placeholder="Filter requirements" aria-label="Filter requirements" oninput="document.querySelectorAll('.req-option').forEach((o) => { o.hidden = !o.textContent.toLowerCase().includes(this.value.toLowerCase()); })">` : ""}</legend>
-        ${requirements.length ? `<div class="req-options">${requirements.map((req) => `<label class="req-option"><input type="checkbox" name="requirement_ids" value="${esc(req.id)}" ${linkedReqs.has(req.id) ? "checked" : ""}> <span class="case-key">${esc(req.key)}</span> ${esc(req.title)}</label>`).join("")}</div>` : '<p class="muted">No requirements in this project yet.</p>'}
-        <small class="muted">Requirement links and automation details don't create a new version or need re-approval.</small></fieldset>
       <div class="field full"><label>Objective</label><textarea name="objective" placeholder="What does this test demonstrate?">${value("objective")}</textarea></div>
       <div class="field full"><label>Description</label><textarea name="description" placeholder="Additional context for testers">${value("description")}</textarea></div>
       <div class="field full"><label>Preconditions</label><textarea name="preconditions" placeholder="Required setup before execution">${value("preconditions")}</textarea></div>
@@ -1176,7 +1157,6 @@ async function caseForm(existing = null, steps = []) {
       tags: fields.tags.split(",").map((tag) => tag.trim()).filter(Boolean),
       objective: fields.objective, description: fields.description, preconditions: fields.preconditions,
       automation_status: fields.automation_status, automation_reference: fields.automation_reference,
-      requirement_ids: [...form.querySelectorAll('input[name="requirement_ids"]:checked')].map((box) => box.value),
       // Step inputs share the name "expected_result", so read the case-level field directly.
       expected_result: form.querySelector('textarea[name="expected_result"]').value,
       steps: formSteps,
@@ -1231,36 +1211,24 @@ async function viewCase(id, tab = "details") {
   catch (error) { toast(error.message); return; }
   const testCase = details.case;
   const canEdit = can("repository.write") && testCase.archived !== true;
-  const approver = can("approvals.decide");
-  const transitions = (details.allowed_transitions || []).filter((target) => approver || ["In Review", "Draft"].includes(target) && testCase.status !== "Deprecated");
-  const transitionButtons = transitions.map((target) => {
-    const text = testCase.status === "Deprecated" && target === "Draft" ? "Restore" : TRANSITION_LABELS[target];
-    return `<button class="button ${target === "Approved" ? "" : "secondary"} ${["Rejected", "Deprecated"].includes(target) ? "danger-text" : ""}" onclick="caseTransition(${jsArg(testCase.id)}, '${target}')">${esc(text)}</button>`;
-  }).join("");
-  const review = details.latest_review;
+  // Approvals are switched off: the only lifecycle state shown is archived / deprecated.
+  const transitionButtons = "";
   let banner = "";
   if (testCase.archived === true) banner = '<div class="notice warn">This test case is archived.</div>';
-  else if (testCase.status === "Rejected" && review) banner = `<div class="notice danger"><strong>Rejected by ${esc(review.reviewer_name)} · ${esc(fmtDate(review.created_at))}</strong><p>${esc(review.comment || "No reason given.")}</p>${canEdit ? "Edit the test case and submit it again." : ""}</div>`;
-  else if (testCase.status === "Approved" && review) banner = `<div class="notice ok">Approved by <strong>${esc(review.reviewer_name)}</strong> · ${esc(fmtDate(review.created_at))} · version ${esc(review.version)}</div>`;
-  else if (testCase.status === "In Review") banner = '<div class="notice">Pending approval.</div>';
-  if (approver && testCase.status === "Approved" && !details.module_approved) banner += '<div class="notice warn">Its module is not approved yet, so team members cannot see this test case.</div>';
+  else if (testCase.status === "Deprecated") banner = '<div class="notice warn">This test case is deprecated and is not added to new cycles.</div>';
   const tags = Array.isArray(testCase.tags) ? testCase.tags.join(", ") : testCase.tags || "";
-  const tabs = [["details", "Details"], ["versions", `Version history (${details.versions.length})`]];
-  if (details.approvals) tabs.push(["approvals", `Approval history (${details.approvals.length})`]);
-  tabs.push(["files", "Attachments"]);
+  const tabs = [["details", "Details"], ["versions", `Version history (${details.versions.length})`], ["files", "Attachments"]];
   const stepRows = details.steps.map((step) => `<tr><td>${esc(step.step_number)}</td><td>${esc(step.action)}</td><td>${esc(step.expected_result)}</td><td>${esc(step.test_data || "—")}</td></tr>`).join("");
   const section = (title, text, fallback) => `<div class="detail-section"><h2>${title}</h2><p class="prewrap">${esc(text || fallback)}</p></div>`;
   let body = "";
   if (tab === "details") {
     body = `<div class="detail-grid">
-        <div><span class="detail-label">Approval</span>${status(testCase.status || "Draft")}</div>
         <div><span class="detail-label">Last status</span>${status(testCase.last_status || "Not Run")}</div>
         <div><span class="detail-label">Priority</span><strong>${esc(testCase.priority || "—")}</strong></div>
         <div><span class="detail-label">Type</span><strong>${esc(testCase.test_type || "—")}</strong></div>
         <div><span class="detail-label">Module</span><strong>${esc(details.folder_path || "—")}</strong></div>
         <div><span class="detail-label">Tags</span><strong>${esc(tags || "—")}</strong></div>
         <div><span class="detail-label">Automation</span><strong>${esc(testCase.automation_status || "Not Automated")}</strong>${testCase.automation_reference ? `<small>${esc(testCase.automation_reference)}</small>` : ""}</div>
-        <div><span class="detail-label">Requirements</span><strong id="caseReqs">${(testCase.requirement_ids || []).length ? `${testCase.requirement_ids.length} linked` : "—"}</strong></div>
         <div><span class="detail-label">Created</span><strong>${esc(details.created_by_name)}</strong><small>${esc(fmtDate(testCase.created_at))}</small></div>
         <div><span class="detail-label">Last updated</span><strong>${esc(details.updated_by_name)}</strong><small>${esc(fmtDate(testCase.updated_at))}</small></div>
       </div>
@@ -1271,21 +1239,13 @@ async function viewCase(id, tab = "details") {
       <div class="detail-section"><h2>Test steps</h2><div class="table-wrap"><table><thead><tr><th>#</th><th>Action</th><th>Expected result</th><th>Test data</th></tr></thead><tbody>${stepRows || '<tr><td colspan="4" class="muted">This version has no steps.</td></tr>'}</tbody></table></div></div>`;
   } else if (tab === "versions") {
     body = `<div class="table-wrap"><table><thead><tr><th>Version</th><th>Saved</th><th>By</th><th>Change note</th><th></th></tr></thead><tbody>${details.versions.map((version) => `<tr><td><strong>v${esc(version.version)}</strong>${String(version.version) === String(testCase.version) ? ' <span class="badge approved">Current</span>' : ""}</td><td>${esc(fmtDate(version.created_at))}</td><td>${esc(version.changed_by_name)}</td><td>${esc(version.comment || "—")}</td><td><button class="link" onclick="showVersion(${jsArg(testCase.id)}, ${jsArg(version.version)})">View</button></td></tr>`).join("")}</tbody></table></div><div id="versionDetail"></div>`;
-  } else if (tab === "files") {
-    body = '<div id="caseFiles"><p class="muted">Loading attachments…</p></div>';
   } else {
-    body = `<div class="table-wrap"><table><thead><tr><th>When</th><th>Decision</th><th>By</th><th>Version</th><th>Comment</th></tr></thead><tbody>${(details.approvals || []).map((row) => `<tr><td>${esc(fmtDate(row.created_at))}</td><td>${status(row.decision)}</td><td>${esc(row.reviewer_name)}</td><td>${row.version ? `v${esc(row.version)}` : "—"}</td><td class="prewrap">${esc(row.comment || "—")}</td></tr>`).join("") || '<tr><td colspan="5" class="muted">No approval activity yet.</td></tr>'}</tbody></table></div>`;
+    body = '<div id="caseFiles"><p class="muted">Loading attachments…</p></div>';
   }
   $("#app").innerHTML = heading(testCase.title, `${caseLabel(testCase)} · version ${testCase.version} · ${details.folder_path || "No module"}`,
     `<div class="heading-actions"><button class="button secondary" onclick="go('repository')">Back</button>${canEdit ? `<button class="button secondary" onclick="editCase(${jsArg(testCase.id)})">Edit</button>` : ""}${testCase.archived === true ? "" : transitionButtons}</div>`) +
     `${banner}<section class="panel detail-panel"><div class="tabs" role="tablist">${tabs.map(([key, text]) => `<button role="tab" aria-selected="${key === tab}" class="tab ${key === tab ? "active" : ""}" onclick="viewCase(${jsArg(testCase.id)}, '${key}')">${esc(text)}</button>`).join("")}</div>${body}</section>`;
-  if (tab === "files") caseAttachmentsTab(testCase.id);
-  if ((testCase.requirement_ids || []).length && $("#caseReqs")) {
-    apiAll(`/requirements?project_id=${encodeURIComponent(testCase.project_id)}`).then((reqs) => {
-      const keys = reqs.filter((req) => testCase.requirement_ids.includes(req.id)).map((req) => req.key);
-      const slot = $("#caseReqs"); if (slot && keys.length) slot.textContent = keys.join(", ");
-    }).catch(() => {});
-  }
+  if (tab !== "details" && tab !== "versions") caseAttachmentsTab(testCase.id);
 }
 
 async function showVersion(caseId, version) {
@@ -1455,9 +1415,8 @@ async function renderWizard() {
         <label class="filter search-filter"><span class="visually-hidden">Find test cases</span><input id="wizCaseSearch" type="search" placeholder="Find test cases by ID or title" value="${esc(wiz.caseQuery)}"></label>
         ${!suiteMode && (wiz.suites || []).length ? `<label class="filter"><span class="visually-hidden">Add a saved suite</span><select id="wizSuite" aria-label="Add a saved suite"><option value="">+ Add a saved suite…</option>${wiz.suites.map((item) => `<option value="${esc(item.id)}">${esc(item.name)} (${item.eligible})</option>`).join("")}</select></label>` : ""}
         <button class="button secondary small" onclick="wizSelectAll()">Select all modules</button><button class="button secondary small" onclick="wizClear()">Clear selection</button>
-        ${can("approvals.decide") ? `<label class="checkbox-filter"><input type="checkbox" id="wizUnapproved" aria-label="Include test cases that are not approved" ${wiz.includeUnapproved ? "checked" : ""}> Include Draft and Pending test cases</label>` : ""}
       </div>
-      ${excluded ? `<p class="muted wizard-note">Not available for selection: ${esc(excluded)}.${wiz.includeUnapproved ? "" : " Only approved test cases in approved modules can be added."}</p>` : ""}
+      ${excluded ? `<p class="muted wizard-note">Not available for selection: ${esc(excluded)}.</p>` : ""}
       <div class="wizard-panes"><div class="wizard-tree" id="wizTree"></div><div class="wizard-cases" id="wizCases"></div></div>
       <div class="wizard-footer"><div id="wizSummary" aria-live="polite"></div><div class="heading-actions">${cancel}${suiteMode ? '<button class="button" id="wizNext" onclick="saveSuite()">Save suite</button>' : `${can("plans.write") ? '<button class="button secondary" onclick="saveSuite()" title="Save this selection as a reusable suite">Save as suite</button>' : ""}${wiz.cycle ? "" : '<button class="button secondary" onclick="wizGo(1)">Back</button>'}<button class="button" id="wizNext" onclick="wizPreview()">Next: preview</button>`}</div></div>
     </section>`;
@@ -1469,7 +1428,7 @@ async function renderWizard() {
       ${p.skipped.length ? `<div class="notice warn wizard-notice"><strong>${p.skipped.length} selected test case${p.skipped.length === 1 ? " is" : "s are"} not eligible and will be left out:</strong><ul>${p.skipped.map((item) => `<li>${esc(item.case_key || item.id)} ${esc(item.title)} — ${esc(item.reason)}</li>`).join("")}</ul></div>` : ""}
       ${p.already_in_cycle.length ? `<div class="notice wizard-notice">${p.already_in_cycle.length} selected test case${p.already_in_cycle.length === 1 ? " is" : "s are"} already in this cycle and will not be added twice.</div>` : ""}
       <div class="table-wrap"><table class="case-table"><thead><tr><th>ID</th><th>Test case</th><th>Priority</th><th>Type</th><th>Version</th></tr></thead><tbody>
-      ${Object.entries(groups).map(([path, rows]) => `<tr class="group-row"><td colspan="5"><strong>${esc(path || "No module")}</strong> <span class="muted">${rows.length}</span></td></tr>` + rows.map((row) => `<tr><td class="case-key">${esc(row.case_key)}</td><td>${esc(row.title)}${row.status !== "Approved" ? ` ${status(row.status)}` : ""}</td><td>${esc(row.priority || "—")}</td><td>${esc(row.test_type || "—")}</td><td>v${esc(row.version)}</td></tr>`).join("")).join("") || '<tr><td colspan="5"><div class="empty">Nothing to add. Go back and select test cases.</div></td></tr>'}
+      ${Object.entries(groups).map(([path, rows]) => `<tr class="group-row"><td colspan="5"><strong>${esc(path || "No module")}</strong> <span class="muted">${rows.length}</span></td></tr>` + rows.map((row) => `<tr><td class="case-key">${esc(row.case_key)}</td><td>${esc(row.title)}${row.status === "Deprecated" ? ` ${status(row.status)}` : ""}</td><td>${esc(row.priority || "—")}</td><td>${esc(row.test_type || "—")}</td><td>v${esc(row.version)}</td></tr>`).join("")).join("") || '<tr><td colspan="5"><div class="empty">Nothing to add. Go back and select test cases.</div></td></tr>'}
       </tbody></table></div>
       <div class="wizard-footer"><div class="muted">Each test case is added at its current version; later repository edits will not change this cycle.</div><div class="heading-actions">${cancel}<button class="button secondary" onclick="wizGo(2)">Back</button><button class="button" ${p.total ? "" : "disabled"} onclick="wizGo(4)">Next: confirm</button></div></div></section>`;
   } else {
@@ -1559,7 +1518,7 @@ function drawWizTree() {
     return `<div class="wiz-node ${wiz.focus === folder.id ? "focused" : ""}" style="--depth:${Math.min(depth, 8)}">
         ${hasChildren ? `<button type="button" class="tree-toggle" onclick="wizToggleCollapse(${jsArg(folder.id)})" aria-label="${collapsed ? "Expand" : "Collapse"} ${esc(folder.name)}" aria-expanded="${!collapsed}">${collapsed ? "▸" : "▾"}</button>` : '<span class="tree-toggle-placeholder"></span>'}
         <input type="checkbox" ${checked ? "checked" : ""} ${inherited || !eligible.length ? "disabled" : ""} data-partial="${partial}" aria-label="Select module ${esc(folder.name)}" onchange="wizToggleModule(${jsArg(folder.id)})">
-        <button type="button" class="wiz-node-label" onclick="wizFocus(${jsArg(folder.id)})"><span>${esc(folder.name)}</span>${folder.approval_status && folder.approval_status !== "Approved" ? `<span class="module-chip">${esc(statusLabel(folder.approval_status))}</span>` : ""}<span class="tree-count">${selected ? `${selected}/` : ""}${eligible.length}</span></button>
+        <button type="button" class="wiz-node-label" onclick="wizFocus(${jsArg(folder.id)})"><span>${esc(folder.name)}</span><span class="tree-count">${selected ? `${selected}/` : ""}${eligible.length}</span></button>
       </div>${hasChildren && !collapsed ? branch(folder.id, depth + 1) : ""}`;
   }).join("");
   const html = branch("", 1);
@@ -1586,7 +1545,7 @@ function drawWizCases() {
   const paths = new Map(wiz.data.folders.map((folder) => [folder.id, folder.path]));
   cases.sort((a, b) => String(a.case_key).localeCompare(String(b.case_key), undefined, { numeric: true }));
   $("#wizCases").innerHTML = `<div class="wiz-cases-head"><strong>${esc(caption)}</strong>${cases.length ? `<span class="heading-actions"><button class="link" onclick="wizSetCases(true)">Select these</button><button class="link" onclick="wizSetCases(false)">Unselect these</button></span>` : ""}</div>
-    <ul class="wiz-case-list">${cases.map((testCase) => `<li><label><input type="checkbox" ${wizIsSelected(testCase) ? "checked" : ""} onchange="wizToggleCase(${jsArg(testCase.id)})"><span class="case-key">${esc(testCase.case_key)}</span><span class="wiz-case-title">${esc(testCase.title)}</span>${testCase.status !== "Approved" ? status(testCase.status) : ""}<small class="muted">${esc(query ? paths.get(testCase.folder_id) || "" : testCase.priority || "")}</small></label></li>`).join("") || '<li class="empty">No eligible test cases here.</li>'}</ul>`;
+    <ul class="wiz-case-list">${cases.map((testCase) => `<li><label><input type="checkbox" ${wizIsSelected(testCase) ? "checked" : ""} onchange="wizToggleCase(${jsArg(testCase.id)})"><span class="case-key">${esc(testCase.case_key)}</span><span class="wiz-case-title">${esc(testCase.title)}</span>${testCase.status === "Deprecated" ? status(testCase.status) : ""}<small class="muted">${esc(query ? paths.get(testCase.folder_id) || "" : testCase.priority || "")}</small></label></li>`).join("") || '<li class="empty">No eligible test cases here.</li>'}</ul>`;
   wiz.visibleCaseIds = cases.map((testCase) => testCase.id);
 }
 
@@ -2432,7 +2391,7 @@ async function dashboard() {
       <span class="muted dash-hint">Dates pick cycles that start in the range and set the activity window.</span>
     </div></section>
     <div class="metrics dash-metrics">
-      ${tile("Test cases", repo.test_cases, `${repo.approval.Approved} approved · ${repo.approval["In Review"]} pending approval`)}
+      ${tile("Test cases", repo.test_cases, `in ${repo.modules} module${repo.modules === 1 ? "" : "s"}`)}
       ${tile("Cycles", data.cycles.active, `active · ${data.cycles.completed} completed`)}
       ${tile("Executed", `${ex.executed}<span class="metric-of"> / ${ex.total}</span>`, `${ex.completion}% complete`, progressBar(ex.completion, "Execution completion"))}
       ${tile("Pass rate", `${ex.pass_rate}%`, "of executed, excluding N/A")}
@@ -2619,7 +2578,7 @@ function renderImportPreview() {
        <label class="checkbox-filter"><input type="checkbox" id="optDuplicates" ${importJob.allow_duplicates ? "checked" : ""}> Import duplicates anyway</label></div>
     </section>
     <div class="metrics import-metrics">
-      ${[["Test cases", s.cases], ["Steps", s.steps], ["Ready", s.ready, "good"], ["Duplicates", s.duplicates, s.duplicates ? "warn" : ""], ["Errors", s.errors, s.errors ? "bad" : ""], ["New modules", s.new_modules], ["New requirements", s.new_requirements]].map(([label, value, cls]) => `<div class="metric ${cls || ""}"><div class="metric-label">${label}</div><div class="metric-value">${value}</div></div>`).join("")}
+      ${[["Test cases", s.cases], ["Steps", s.steps], ["Ready", s.ready, "good"], ["Duplicates", s.duplicates, s.duplicates ? "warn" : ""], ["Errors", s.errors, s.errors ? "bad" : ""], ["New modules", s.new_modules]].map(([label, value, cls]) => `<div class="metric ${cls || ""}"><div class="metric-label">${label}</div><div class="metric-value">${value}</div></div>`).join("")}
     </div>
     ${plan.can_import ? '<div class="notice ok">Everything checks out. A backup of the repository workbooks is taken right before the import, and the file is kept in the import history.</div>' : onlyDuplicates ? '<div class="notice warn">Only duplicates are blocking this import. Remove those rows, or tick “Import duplicates anyway”.</div>' : `<div class="notice danger">Fix the ${blocking} problem${blocking === 1 ? "" : "s"} below in Excel and choose the file again. Nothing is imported while any row has an error.</div>`}
     ${plan.errors.length ? `<section class="panel"><div class="panel-head"><h2>Problems</h2><span class="muted">${plan.errors.length}</span></div><div class="table-wrap"><table><thead><tr><th>Row</th><th>Column</th><th>Problem</th></tr></thead><tbody>${plan.errors.slice(0, 300).map((error) => `<tr class="${error.duplicate ? "" : "error-row"}"><td>${error.row}</td><td>${esc(error.column || "—")}</td><td>${esc(error.message)}</td></tr>`).join("")}</tbody></table></div>${plan.errors.length > 300 ? `<p class="muted panel-note">Showing the first 300 of ${plan.errors.length}.</p>` : ""}</section>` : ""}
@@ -2646,7 +2605,7 @@ async function confirmImport() {
       renderImportPreview();
       return;
     }
-    const extra = [result.modules_created && `${result.modules_created} module${result.modules_created === 1 ? "" : "s"}`, result.requirements_created && `${result.requirements_created} requirement${result.requirements_created === 1 ? "" : "s"}`].filter(Boolean).join(" and ");
+    const extra = [result.modules_created && `${result.modules_created} module${result.modules_created === 1 ? "" : "s"}`].filter(Boolean).join(" and ");
     state.importFeedback = `<div class="import-success">${result.created} test case${result.created === 1 ? "" : "s"} imported from ${esc(importJob.name)}${extra ? `, plus ${esc(extra)} created` : ""}. <button class="link" onclick="importHistoryPage()">Import history</button></div>`;
     state.highlightedCaseIds = new Set(result.case_ids || []);
     state.repoFilters = { ...state.repoFilters, q: "", status: "", priority: "", type: "", last: "" };
@@ -2664,9 +2623,9 @@ async function importHistoryPage() {
   collapseRepoSettings();
   const { items } = await api(`/imports?project_id=${encodeURIComponent(state.project.id)}`);
   $("#app").innerHTML = heading("Import history", "Every Excel import into this project, including rejected attempts.", '<button class="button secondary" onclick="go(\'repository\')">Back to repository</button>') +
-    `<section class="panel">${items.length ? `<div class="table-wrap"><table><thead><tr><th>When</th><th>File</th><th>Sheet</th><th>Result</th><th>Test cases</th><th>Steps</th><th>New modules</th><th>New requirements</th><th>Problems</th><th>By</th></tr></thead><tbody>${items.map((row) => `<tr><td>${esc(fmtDate(row.imported_at))}</td>
+    `<section class="panel">${items.length ? `<div class="table-wrap"><table><thead><tr><th>When</th><th>File</th><th>Sheet</th><th>Result</th><th>Test cases</th><th>Steps</th><th>New modules</th><th>Problems</th><th>By</th></tr></thead><tbody>${items.map((row) => `<tr><td>${esc(fmtDate(row.imported_at))}</td>
       <td>${row.has_file ? `<a href="/api/imports/${esc(row.id)}/file" download>${esc(row.filename)}</a>` : esc(row.filename)}${row.duplicates_allowed === true ? '<small class="muted block">Duplicates allowed</small>' : ""}<small class="muted block case-key" title="SHA-256 of the uploaded file">${esc(String(row.sha256).slice(0, 12))}…</small></td>
-      <td>${esc(row.sheet || "—")}</td><td><span class="badge ${row.status === "Imported" ? "approved" : "rejected"}">${esc(row.status)}</span></td><td>${esc(row.cases_created)}</td><td>${esc(row.steps_created)}</td><td>${esc(row.modules_created)}</td><td>${esc(row.requirements_created)}</td><td>${esc(row.error_count)}</td><td>${esc(row.imported_by_name)}</td></tr>`).join("")}</tbody></table></div>` : '<div class="empty">No imports yet.</div>'}</section>`;
+      <td>${esc(row.sheet || "—")}</td><td><span class="badge ${row.status === "Imported" ? "approved" : "rejected"}">${esc(row.status)}</span></td><td>${esc(row.cases_created)}</td><td>${esc(row.steps_created)}</td><td>${esc(row.modules_created)}</td><td>${esc(row.error_count)}</td><td>${esc(row.imported_by_name)}</td></tr>`).join("")}</tbody></table></div>` : '<div class="empty">No imports yet.</div>'}</section>`;
 }
 
 // -------------------------------------------------------------------- audit log
@@ -2810,11 +2769,10 @@ function ago(value) {
 
 function caseRowsHtml(cases) {
   const canEdit = can("repository.write");
-  const canApprove = can("approvals.decide");
-  const colspan = canEdit ? 9 : 8;
+  const colspan = canEdit ? 8 : 7;
   if (!cases.length) {
     const filtered = state.cases.length && (state.repoFilters.q || state.repoFilters.status || state.repoFilters.priority || state.repoFilters.type || state.repoFilters.last);
-    return `<tr><td colspan="${colspan}"><div class="empty repo-empty">${filtered ? 'No test cases match these filters. <button class="link" onclick="clearRepoFilters()">Clear filters</button>' : state.selectedFolder ? "No test cases in this module yet." : canEdit ? "No test cases in this project yet. Import an Excel file or create your first test case." : "No approved test cases in this project yet."}</div></td></tr>`;
+    return `<tr><td colspan="${colspan}"><div class="empty repo-empty">${filtered ? 'No test cases match these filters. <button class="link" onclick="clearRepoFilters()">Clear filters</button>' : state.selectedFolder ? "No test cases in this module yet." : canEdit ? "No test cases in this project yet. Import an Excel file or create your first test case." : "No test cases in this project yet."}</div></td></tr>`;
   }
   const paths = new Map(state.folders.map((folder) => [folder.id, folder.path || folder.name]));
   const sorted = [...cases].sort((a, b) => String(paths.get(a.folder_id) || "").localeCompare(String(paths.get(b.folder_id) || "")) || String(a.case_key || "").localeCompare(String(b.case_key || ""), undefined, { numeric: true }));
@@ -2829,7 +2787,6 @@ function caseRowsHtml(cases) {
       const parts = path.split("/").filter(Boolean);
       header = `<tr class="section-row"><td colspan="${colspan}"><span class="section-icon" aria-hidden="true">▰</span>${parts.length > 1 ? `<span class="section-parent">${esc(parts.slice(0, -1).join(" / "))} / </span>` : ""}<strong>${esc(parts.at(-1) || path)}</strong><span class="section-count">${counts.get(group)}</span></td></tr>`;
     }
-    const approval = testCase.status || "Draft";
     const last = testCase.last_status || "Not Run";
     const tags = Array.isArray(testCase.tags) ? testCase.tags : String(testCase.tags || "").split(",").map((tag) => tag.trim()).filter(Boolean);
     const priority = testCase.priority || "";
@@ -2839,7 +2796,6 @@ function caseRowsHtml(cases) {
       <td class="case-title-cell"><button class="case-title" title="${esc(testCase.title)}" onclick="viewCase(${jsArg(testCase.id)})">${esc(plainTitle(testCase))}</button><span class="title-meta">${esc(testCase.test_type || "")}${testCase.test_type ? " · " : ""}v${esc(testCase.version)}</span>${tags.length ? `<span class="tag-list">${tags.slice(0, 4).map((tag) => `<span class="tag">${esc(tag)}</span>`).join("")}${tags.length > 4 ? `<span class="tag more">+${tags.length - 4}</span>` : ""}</span>` : ""}</td>
       <td>${priority ? `<span class="priority ${PRIORITY_TONE[priority] || ""}"><i aria-hidden="true"></i>${esc(priority)}</span>` : '<span class="muted">—</span>'}</td>
       <td class="type-cell">${esc(testCase.test_type || "—")}</td>
-      <td>${canApprove ? `<select class="last-status-select approval-select status-${esc(approval.toLowerCase().replaceAll(" ", "-"))}" aria-label="Approval for ${esc(testCase.title)}" data-approval-case="${esc(testCase.id)}" data-previous-approval="${esc(approval)}">${APPROVAL_STATES.map((item) => `<option value="${item}" ${item === approval ? "selected" : ""}>${statusLabel(item)}</option>`).join("")}</select>` : status(approval)}</td>
       <td>${canEdit ? `<select class="last-status-select status-${esc(last.toLowerCase().replaceAll(" ", "-"))}" aria-label="Last result for ${esc(testCase.title)}" data-last-status-case="${esc(testCase.id)}" data-previous-status="${esc(last)}">${RUN_STATES.map((item) => `<option ${item === last ? "selected" : ""}>${item}</option>`).join("")}</select>` : status(last)}</td>
       <td class="num-cell">v${esc(testCase.version)}</td>
       <td class="date-cell" title="${esc(fmtDate(testCase.updated_at))}">${esc(ago(testCase.updated_at))}</td>
@@ -2863,7 +2819,6 @@ async function repository() {
   const collapsed = state.repoSidebarCollapsed;
   const visible = filteredCases();
   const filtersOn = Boolean(f.q || f.status || f.priority || f.type || f.last);
-  const approved = state.cases.filter((testCase) => testCase.status === "Approved").length;
   const crumbs = selectedFolder ? (selectedFolder.path || selectedFolder.name).split("/").filter(Boolean) : [];
   const actions = canEdit ? `<div class="repo-actions">
       <button class="button secondary small" onclick="triggerCaseImport()">⇪ Import</button>
@@ -2875,7 +2830,7 @@ async function repository() {
   return `<div class="repo-head">
       <div><nav class="crumbs" aria-label="Breadcrumb"><span>${esc(state.project.key)}</span><span aria-hidden="true">›</span><button class="link-plain" onclick="state.selectedFolder=''; render()">Test Repository</button>${crumbs.map((part) => `<span aria-hidden="true">›</span><span>${esc(part)}</span>`).join("")}</nav>
         <h1>${esc(selectedFolder ? selectedFolder.name : "Test Repository")}</h1>
-        <p class="repo-stats"><span><strong>${state.cases.length}</strong> test cases</span><span><strong>${approved}</strong> approved</span><span><strong>${state.folders.length}</strong> modules</span>${selectedFolder && canEdit ? `<span>${moduleChip(selectedFolder) || '<span class="module-chip ok">Approved module</span>'}</span>` : ""}</p></div>
+        <p class="repo-stats"><span><strong>${state.cases.length}</strong> test cases</span><span><strong>${state.folders.length}</strong> modules</span></p></div>
       ${actions}</div>
     <div class="repo repo-v2 ${collapsed ? "repo-collapsed" : ""}">
       ${collapsed ? "" : `<aside class="panel tree"><div class="tree-header"><strong>Modules</strong><div class="tree-actions">${canEdit ? '<button class="icon-button" title="Add module" aria-label="Add module" onclick="newFolder()">+</button>' : ""}<button class="icon-button" title="Hide modules" aria-label="Hide modules" onclick="toggleRepoSidebar()">◀</button></div></div>
@@ -2887,13 +2842,12 @@ async function repository() {
           <label class="filter search-filter"><span class="visually-hidden">Search test cases</span><input id="repoSearch" type="search" placeholder="Search ID, title or tag…" value="${esc(f.q)}"></label>
           ${filterSelect("repoPriority", "Priority", PRIORITIES, f.priority)}
           ${filterSelect("repoType", "Type", types, f.type)}
-          ${filterSelect("repoStatus", "Approval", APPROVAL_STATES, f.status)}
           ${filterSelect("repoLast", "Last result", RUN_STATES, f.last)}
           <label class="filter checkbox-filter"><input id="repoIncludeSub" type="checkbox" aria-label="Include submodules" ${f.includeSub ? "checked" : ""}> Submodules</label>
           <span class="repo-count"><strong id="repoCount">${visible.length}</strong> of ${state.cases.length}${filtersOn ? ' · <button class="link" onclick="clearRepoFilters()">Clear</button>' : ""}</span>
         </div>
         <div id="importFeedback" class="import-feedback" aria-live="polite">${state.importing ? `<div class="import-loading"><span class="spinner" aria-hidden="true"></span><span>Importing “${esc(state.importingFile)}” — reading Excel and adding cases. Please wait…</span></div>` : state.importFeedback}</div>
-        <div class="table-wrap repo-table-wrap"><table class="case-table repo-table"><thead><tr>${canEdit ? '<th class="check-col"><input type="checkbox" id="selectAllCases" aria-label="Select all visible cases"></th>' : ""}<th class="id-col">ID</th><th>Title</th><th class="pri-col">Priority</th><th class="type-col">Type</th><th class="status-col">Approval</th><th class="status-col">Last result</th><th class="num-col">Ver.</th><th class="date-col">Updated</th></tr></thead>
+        <div class="table-wrap repo-table-wrap"><table class="case-table repo-table"><thead><tr>${canEdit ? '<th class="check-col"><input type="checkbox" id="selectAllCases" aria-label="Select all visible cases"></th>' : ""}<th class="id-col">ID</th><th>Title</th><th class="pri-col">Priority</th><th class="type-col">Type</th><th class="status-col">Last result</th><th class="num-col">Ver.</th><th class="date-col">Updated</th></tr></thead>
           <tbody id="caseRows">${caseRowsHtml(visible)}</tbody>
         </table></div>
         ${canEdit ? `<div id="bulkBar" class="bulk-bar" role="toolbar" aria-label="Bulk actions" hidden></div>` : ""}
@@ -3157,11 +3111,11 @@ async function suitesPage() {
   const rows = items.map((suite) => `<tr>
       <td><strong>${esc(suite.name)}</strong>${suite.description ? `<small class="muted block">${esc(suite.description)}</small>` : ""}</td>
       <td>${suite.modules.length ? suite.modules.map((path) => `<span class="tag" title="${esc(path)}">${esc(path.split("/").filter(Boolean).at(-1) || path)}</span>`).join(" ") : '<span class="muted">—</span>'}${suite.case_ids.length ? `<small class="muted block">+ ${suite.case_ids.length} picked test case${suite.case_ids.length === 1 ? "" : "s"}</small>` : ""}</td>
-      <td class="num"><strong>${suite.eligible}</strong>${Object.keys(suite.excluded).length ? `<small class="muted block" title="Not approved, deprecated or in an unapproved module">${Object.values(suite.excluded).reduce((a, b) => a + b, 0)} not eligible</small>` : ""}</td>
+      <td class="num"><strong>${suite.eligible}</strong>${Object.keys(suite.excluded).length ? `<small class="muted block" title="Archived or deprecated">${Object.values(suite.excluded).reduce((a, b) => a + b, 0)} not eligible</small>` : ""}</td>
       <td>${suite.cycles.length ? suite.cycles.map((c) => `<button class="link" onclick="openCycle(${jsArg(c.id)})">${esc(c.name)}</button>`).join(", ") : '<span class="muted">Not used yet</span>'}</td>
       <td class="row-actions">${cycles ? `<button class="button small" onclick="cycleWizard('', { suite: ${esc(JSON.stringify({ id: suite.id, module_ids: suite.module_ids, case_ids: suite.case_ids }))} })">Create cycle</button>` : ""}${manage ? `<button class="button secondary small" onclick="suiteWizard(${jsArg(suite.id)})">Edit</button><button class="icon-button remove-run" title="Delete suite" aria-label="Delete suite ${esc(suite.name)}" onclick="deleteSuite(${jsArg(suite.id)}, ${jsArg(suite.name)})">✕</button>` : ""}</td></tr>`).join("");
   return `<div class="repo-head"><div><nav class="crumbs"><span>${esc(state.project.key)}</span><span aria-hidden="true">›</span><span>Test Suites</span></nav><h1>Test Suites</h1>
-      <p class="repo-stats"><span>Reusable sets of modules and test cases. Use one to build a Smoke, Sanity or Regression cycle in any release; newly approved test cases in its modules are included automatically.</span></p></div>
+      <p class="repo-stats"><span>Reusable sets of modules and test cases. Use one to build a Smoke, Sanity or Regression cycle in any release; new test cases added to its modules are included automatically.</span></p></div>
       ${manage ? '<div class="repo-actions"><button class="button small" onclick="suiteWizard()">+ New suite</button></div>' : ""}</div>
     <section class="panel">${items.length ? `<div class="table-wrap"><table class="case-table"><thead><tr><th>Suite</th><th>Contents</th><th class="num">Eligible test cases</th><th>Used in cycles</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
       : `<div class="empty">No suites yet.${manage ? ' <button class="link" onclick="suiteWizard()">Create a suite</button>, e.g. “Payment smoke” or “Full regression”.' : ""}</div>`}</section>`;
@@ -3319,28 +3273,6 @@ function addDefectToExecution(key) {
   if (!input) return;
   const list = defectList(input.value);
   if (!list.map((item) => item.toLowerCase()).includes(key.toLowerCase())) input.value = [...list, key].join(", ");
-}
-
-// ---------------------------------------------------------------- requirements
-async function requirementsPage() {
-  const data = await api(`/requirements/coverage?project_id=${encodeURIComponent(state.project.id)}`);
-  state.coverage = data;
-  const tone = { Passing: "approved", Failing: "failed", "Partly tested": "in-progress", "Not run": "not-run", "Not covered": "rejected" };
-  const rows = data.requirements.map((r) => `<tr class="case-row" onclick="openRequirement(${jsArg(r.id)})"><td class="case-id-cell"><span class="case-id">${esc(r.key)}</span></td><td>${esc(r.title)}</td><td>${esc(r.priority || "—")}</td><td>${status(r.status || "Draft")}</td>
-      <td class="num">${r.cases.length}</td><td><span class="badge ${tone[r.coverage] || ""}">${esc(r.coverage)}</span></td></tr>`).join("");
-  return `<div class="repo-head"><div><nav class="crumbs"><span>${esc(state.project.key)}</span><span aria-hidden="true">›</span><span>Requirements</span></nav><h1>Requirements</h1>
-      <p class="repo-stats">${Object.entries(data.summary).map(([label, count]) => `<span><strong>${count}</strong> ${esc(label.toLowerCase())}</span>`).join("")}</p></div>
-      ${can("requirements.write") ? `<div class="repo-actions"><button class="button small" onclick="newEntity('requirements')">+ New requirement</button></div>` : ""}</div>
-    <section class="panel">${data.total ? `<div class="table-wrap"><table class="case-table"><thead><tr><th class="id-col">Key</th><th>Requirement</th><th>Priority</th><th>Status</th><th class="num">Test cases</th><th>Coverage (latest results)</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<div class="empty">No requirements yet. They are also created automatically from the Requirement Keys column in Excel imports.</div>'}
-      <p class="muted panel-foot">Coverage uses each linked test case's latest result in any cycle. Link test cases to requirements on the test case's Edit screen.</p></section>`;
-}
-
-function openRequirement(requirementId) {
-  const r = state.coverage.requirements.find((item) => item.id === requirementId);
-  if (!r) return;
-  openDrawer(`${r.key} · ${r.title}`, `${esc(r.type || "Requirement")} · ${esc(r.priority || "—")} priority · ${esc(r.coverage)}`,
-    `${r.description ? `<p class="prewrap">${esc(r.description)}</p>` : ""}<h3 class="confirm-subhead">Test cases (${r.cases.length})</h3>
-     ${r.cases.length ? `<ul class="failure-list">${r.cases.map((c) => `<li><button class="link case-key" onclick="closeDrawer(); viewCase(${jsArg(c.id)})">${esc(c.case_key)}</button> ${status(c.latest)} <div>${esc(plainTitle({ case_key: c.case_key, title: c.title }))}</div></li>`).join("")}</ul>` : '<p class="muted">No test case covers this requirement yet.</p>'}`);
 }
 
 async function rebuildIndex() {
