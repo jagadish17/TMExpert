@@ -42,9 +42,9 @@ WORKBOOKS: dict[str, tuple[str, tuple[str, ...]]] = {
     "test_steps": ("repository/Test_Steps.xlsx", ("id", "test_case_id", "version", "step_number", "action", "expected_result", "test_data", "created_at", "updated_at", "archived")),
     "test_case_versions": ("repository/Test_Case_Versions.xlsx", ("id", "test_case_id", "version", "snapshot", "comment", "changed_by", "created_at")),
     "requirements": ("requirements/Requirements.xlsx", ("id", "project_id", "parent_id", "key", "title", "description", "type", "priority", "version", "owner_id", "status", "source_reference", "created_at", "updated_at", "archived")),
-    "test_plans": ("execution/Test_Plans.xlsx", ("id", "project_id", "name", "description", "release", "build", "start_date", "end_date", "owner_id", "scope", "status", "created_at", "updated_at", "archived")),
-    "test_suites": ("execution/Test_Suites.xlsx", ("id", "project_id", "plan_id", "name", "description", "owner_id", "status", "created_at", "updated_at", "archived")),
-    "test_cycles": ("execution/Test_Cycles.xlsx", ("id", "project_id", "suite_id", "name", "environment", "build", "start_date", "end_date", "owner_id", "status", "created_at", "updated_at", "archived", "testing_type", "description", "module_ids", "created_by", "updated_by")),
+    "test_plans": ("execution/Test_Plans.xlsx", ("id", "project_id", "name", "description", "release", "build", "start_date", "end_date", "owner_id", "scope", "status", "created_at", "updated_at", "archived", "exit_criteria", "created_by", "updated_by")),
+    "test_suites": ("execution/Test_Suites.xlsx", ("id", "project_id", "plan_id", "name", "description", "owner_id", "status", "created_at", "updated_at", "archived", "kind", "module_ids", "case_ids", "include_submodules", "created_by", "updated_by")),
+    "test_cycles": ("execution/Test_Cycles.xlsx", ("id", "project_id", "suite_id", "name", "environment", "build", "start_date", "end_date", "owner_id", "status", "created_at", "updated_at", "archived", "testing_type", "description", "module_ids", "created_by", "updated_by", "plan_id", "source_cycle_id", "suite_ids")),
     "test_runs": ("execution/Test_Runs.xlsx", ("id", "project_id", "cycle_id", "test_case_id", "test_case_version", "tester_id", "environment", "build", "status", "started_at", "completed_at", "actual_result", "created_at", "updated_at", "archived", "case_key", "case_title", "module_id", "module_path", "priority", "test_type", "created_by", "updated_by", "assignee_id", "assignment_source", "assigned_at", "assigned_by", "execution_notes", "defect_ids", "executed_by", "executed_at", "attempt_count")),
     "execution_history": ("execution/Execution_History.xlsx", ("id", "project_id", "cycle_id", "test_run_id", "case_key", "attempt", "status", "previous_status", "actual_result", "notes", "defect_ids", "attachment_ids", "step_results", "source", "executed_by", "executed_at")),
     "attachments": ("execution/Attachments.xlsx", ("id", "project_id", "owner_type", "owner_id", "filename", "content_type", "size", "sha256", "stored_name", "uploaded_by", "created_at", "archived")),
@@ -52,7 +52,7 @@ WORKBOOKS: dict[str, tuple[str, tuple[str, ...]]] = {
     "import_history": ("history/Import_History.xlsx", ("id", "project_id", "filename", "sha256", "sheet", "rows_read", "cases_created", "steps_created", "requirements_created", "modules_created", "duplicates_allowed", "status", "error_count", "target_folder_id", "stored_file", "imported_by", "imported_at")),
     "assignment_history": ("history/Assignment_History.xlsx", ("id", "project_id", "cycle_id", "test_run_id", "case_key", "module_path", "from_assignee_id", "to_assignee_id", "source", "reason", "actor_id", "created_at")),
     "execution_results": ("execution/Execution_Results.xlsx", ("id", "test_run_id", "step_id", "step_number", "status", "actual_result", "evidence", "comment", "created_at", "updated_at")),
-    "defects": ("execution/Defects.xlsx", ("id", "project_id", "key", "summary", "description", "severity", "priority", "status", "assignee_id", "reporter_id", "environment", "build", "evidence", "test_run_id", "test_case_id", "created_at", "updated_at", "archived")),
+    "defects": ("execution/Defects.xlsx", ("id", "project_id", "key", "summary", "description", "severity", "priority", "status", "assignee_id", "reporter_id", "environment", "build", "evidence", "test_run_id", "test_case_id", "created_at", "updated_at", "archived", "external_key", "external_url", "found_in_cycle_id", "fixed_in_build", "resolved_at", "closed_at", "created_by", "updated_by")),
     "approvals": ("history/Approvals.xlsx", ("id", "test_case_id", "version", "reviewer_id", "decision", "comment", "created_at", "folder_id")),
     "audit": ("history/Audit_History.xlsx", ("id", "actor_id", "action", "entity", "record_id", "project_id", "previous_value", "new_value", "result", "created_at", "hash")),
 }
@@ -62,7 +62,7 @@ REQUIRED = {
     "folders": ("project_id", "name"), "test_cases": ("project_id", "folder_id", "title", "priority", "status"),
     "test_steps": ("test_case_id", "step_number", "action", "expected_result"),
     "requirements": ("project_id", "key", "title", "status"), "test_plans": ("project_id", "name"),
-    "test_suites": ("project_id", "plan_id", "name"), "test_cycles": ("project_id", "name"),
+    "test_suites": ("project_id", "name"), "test_cycles": ("project_id", "name"),
     "test_runs": ("project_id", "cycle_id", "test_case_id", "status"), "execution_results": ("test_run_id", "step_id", "step_number", "status"),
     "defects": ("project_id", "key", "summary", "status"),
 }
@@ -72,13 +72,13 @@ REFERENCES = {
     "test_steps": {"test_case_id": "test_cases"}, "test_case_versions": {"test_case_id": "test_cases", "changed_by": "users"},
     "requirements": {"project_id": "projects", "parent_id": "requirements", "owner_id": "users"},
     "test_plans": {"project_id": "projects", "owner_id": "users"}, "test_suites": {"project_id": "projects", "plan_id": "test_plans", "owner_id": "users"},
-    "test_cycles": {"project_id": "projects", "suite_id": "test_suites", "owner_id": "users"},
+    "test_cycles": {"project_id": "projects", "suite_id": "test_suites", "owner_id": "users", "plan_id": "test_plans", "source_cycle_id": "test_cycles"},
     "test_runs": {"project_id": "projects", "cycle_id": "test_cycles", "test_case_id": "test_cases", "tester_id": "users", "assignee_id": "users"},
     "cycle_assignments": {"project_id": "projects", "cycle_id": "test_cycles", "assignee_id": "users"},
     "assignment_history": {"cycle_id": "test_cycles", "test_run_id": "test_runs"},
     "execution_history": {"cycle_id": "test_cycles", "test_run_id": "test_runs", "executed_by": "users"},
     "execution_results": {"test_run_id": "test_runs", "step_id": "test_steps"},
-    "defects": {"project_id": "projects", "assignee_id": "users", "reporter_id": "users", "test_run_id": "test_runs", "test_case_id": "test_cases"},
+    "defects": {"project_id": "projects", "assignee_id": "users", "reporter_id": "users", "test_run_id": "test_runs", "test_case_id": "test_cases", "found_in_cycle_id": "test_cycles"},
     "approvals": {"test_case_id": "test_cases", "reviewer_id": "users", "folder_id": "folders"},
 }
 VALID_STATUSES = {
@@ -102,7 +102,11 @@ ADDITIVE_COLUMNS: dict[str, dict[str, Any]] = {
     "folders": {"approval_status": "Approved", "reviewed_by": "", "reviewed_at": "", "created_by": "", "updated_by": ""},
     "approvals": {"folder_id": ""},
     "audit": {"hash": ""},
-    "test_cycles": {"testing_type": "", "description": "", "module_ids": "", "created_by": "", "updated_by": ""},
+    "test_cycles": {"testing_type": "", "description": "", "module_ids": "", "created_by": "", "updated_by": "", "plan_id": "", "source_cycle_id": "", "suite_ids": ""},
+    "test_plans": {"exit_criteria": "", "created_by": "", "updated_by": ""},
+    # Rows that existed before reusable suites were the hidden per-cycle plan links.
+    "test_suites": {"kind": "cycle_link", "module_ids": "", "case_ids": "", "include_submodules": "", "created_by": "", "updated_by": ""},
+    "defects": {"external_key": "", "external_url": "", "found_in_cycle_id": "", "fixed_in_build": "", "resolved_at": "", "closed_at": "", "created_by": "", "updated_by": ""},
     "test_runs": {"case_key": "", "case_title": "", "module_id": "", "module_path": "", "priority": "", "test_type": "", "created_by": "", "updated_by": "", "assignee_id": "", "assignment_source": "", "assigned_at": "", "assigned_by": "", "execution_notes": "", "defect_ids": "", "executed_by": "", "executed_at": "", "attempt_count": "0"},
     "users": {"must_change_password": lambda record: record.get("password_hash") == LEGACY_CHANGE_ME_HASH},
 }
@@ -375,6 +379,7 @@ class ExcelStorageService:
         self._migrate_test_case_schema()
         for entity in WORKBOOKS: self._migrate_additive_columns(entity)
         self._backfill_case_keys()
+        self._link_cycles_to_plans()
         self._adopt_title_case_keys()
         self.rebuild_index()
 
@@ -438,6 +443,23 @@ class ExcelStorageService:
                 record[column] = default(record) if callable(default) else default
             upgraded.append(record)
         self._replace_workbook(entity, new_headers, upgraded, "add-columns")
+    def _link_cycles_to_plans(self) -> None:
+        """Cycles used to reach their plan through a hidden suite row; store the plan directly."""
+        cycles = self._load("test_cycles")[2]
+        pending = [c for c in cycles if not c.get("plan_id") and c.get("suite_id")]
+        if not pending: return
+        suites = self._load("test_suites")[3]
+        changes = {c["id"]: suites[c["suite_id"]]["plan_id"] for c in pending
+                   if c["suite_id"] in suites and suites[c["suite_id"]].get("plan_id") and self.get("test_plans", suites[c["suite_id"]]["plan_id"])}
+        if not changes: return
+        # Written directly (not re-validated) so an unrelated bad reference can never block startup.
+        with WorkbookLock(self.root / "temp" / "test_cycles.lock", self.locks["test_cycles"]):
+            records = self._read_all("test_cycles")
+            before = {r["id"]: dict(r) for r in records if r["id"] in changes}
+            for record in records:
+                if record["id"] in changes: record["plan_id"] = changes[record["id"]]
+            self._commit("test_cycles", records, force_backup=True, changed_ids=set(changes))
+        self._audit_many([self._audit_entry("Migrate", "test_cycles", cid, {"plan_id": ""}, {"plan_id": pid, "project_id": before[cid].get("project_id", "")}, "system") for cid, pid in changes.items()])
     def _backfill_case_keys(self) -> None:
         """Give every existing test case a stable, readable ID (e.g. LMS-TC-0001)."""
         rows = self._load("test_cases")[2]

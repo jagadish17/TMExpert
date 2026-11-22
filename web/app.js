@@ -32,6 +32,10 @@ const state = {
   dash: { cycle: "", module: "", member: "", from: "", to: "" },
   dashData: null,
   audit: { entity: "", action: "", actor: "", date_from: "", date_to: "", q: "", page: "" },
+  planId: "",
+  defectFilter: { status: "__open", severity: "", q: "" },
+  defectMeta: null,
+  coverage: null,
 };
 
 let renderSequence = 0;
@@ -271,13 +275,10 @@ async function render() {
     else if (state.view === "compare") content = await compareView();
     else if (state.view === "repository") content = await repository();
     else if (state.view === "projects") content = projectTable();
-    else if (state.view === "requirements") {
-      const records = await apiAll(`/requirements?project_id=${encodeURIComponent(state.project.id)}`);
-      content = genericList("Requirements", "requirements", "Trace product requirements to the test coverage that verifies them.", records);
-    } else if (state.view === "plans") {
-      const records = await apiAll(`/test_plans?project_id=${encodeURIComponent(state.project.id)}`);
-      content = genericList("Test Plans", "test_plans", "Define release, sprint, and regression testing scope.", records);
-    } else if (state.view === "execution") content = await execution();
+    else if (state.view === "requirements") content = await requirementsPage();
+    else if (state.view === "plans") content = await plansPage();
+    else if (state.view === "suites") content = await suitesPage();
+    else if (state.view === "defects") content = await defectsPage(); else if (state.view === "execution") content = await execution();
     else if (state.view === "reports") content = await reportsPage();
     else if (state.view === "approvals" && can("approvals.decide")) content = await approvalsPage();
     else if (state.view === "audit") content = await auditPage();
@@ -340,6 +341,7 @@ async function render() {
     bindWorkspace();
     bindCompare();
     if (state.view === "dashboard") bindDashboard();
+    if (state.view === "defects") bindDefects();
     if (state.view === "audit") { bindAudit(); const search = $("#auditSearch"); if (search && state.audit.q) { search.focus(); search.setSelectionRange(search.value.length, search.value.length); } }
     const queueAll = $("#queueAll");
     if (queueAll) queueAll.onchange = () => document.querySelectorAll(".queue-check").forEach((item) => { item.checked = queueAll.checked; });
@@ -356,6 +358,8 @@ async function render() {
 }
 
 async function go(view) {
+  if (view === "plans" && state.view !== "plans" && !state.keepPlan) state.planId = "";
+  state.keepPlan = false;
   if (view !== state.view) {
     state.highlightedCaseIds.clear();
     state.importFeedback = "";
@@ -1128,6 +1132,9 @@ async function caseForm(existing = null, steps = []) {
     return;
   }
   const editing = Boolean(existing);
+  const requirements = await apiAll(`/requirements?project_id=${encodeURIComponent(state.project.id)}`).catch(() => []);
+  const linkedReqs = new Set(existing?.requirement_ids || []);
+  const automation = existing?.automation_status || "Not Automated";
   const value = (key) => esc(existing?.[key] ?? "");
   const types = [...new Set(["Manual", "Automated", existing?.test_type].filter(Boolean))];
   const tags = Array.isArray(existing?.tags) ? existing.tags.join(", ") : existing?.tags || "";
@@ -1139,6 +1146,11 @@ async function caseForm(existing = null, steps = []) {
       <div class="field"><label>Priority *</label><select name="priority">${PRIORITIES.map((item) => `<option ${item === (existing?.priority || "Medium") ? "selected" : ""}>${item}</option>`).join("")}</select></div>
       <div class="field"><label>Test type</label><select name="test_type">${types.map((item) => `<option ${item === (existing?.test_type || "Manual") ? "selected" : ""}>${esc(item)}</option>`).join("")}</select></div>
       <div class="field"><label>Tags</label><input name="tags" value="${esc(tags)}" placeholder="smoke, regression"></div>
+      <div class="field"><label>Automation status</label><select name="automation_status">${["Not Automated", "In Progress", "Automated", "Not Applicable"].map((item) => `<option ${item === automation ? "selected" : ""}>${item}</option>`).join("")}</select></div>
+      <div class="field"><label>Automation reference</label><input name="automation_reference" maxlength="300" value="${value("automation_reference")}" placeholder="e.g. tests/login.spec.ts"></div>
+      <fieldset class="field full req-picker"><legend>Requirements covered${requirements.length ? ` <input type="search" class="req-filter" placeholder="Filter requirements" aria-label="Filter requirements" oninput="document.querySelectorAll('.req-option').forEach((o) => { o.hidden = !o.textContent.toLowerCase().includes(this.value.toLowerCase()); })">` : ""}</legend>
+        ${requirements.length ? `<div class="req-options">${requirements.map((req) => `<label class="req-option"><input type="checkbox" name="requirement_ids" value="${esc(req.id)}" ${linkedReqs.has(req.id) ? "checked" : ""}> <span class="case-key">${esc(req.key)}</span> ${esc(req.title)}</label>`).join("")}</div>` : '<p class="muted">No requirements in this project yet.</p>'}
+        <small class="muted">Requirement links and automation details don't create a new version or need re-approval.</small></fieldset>
       <div class="field full"><label>Objective</label><textarea name="objective" placeholder="What does this test demonstrate?">${value("objective")}</textarea></div>
       <div class="field full"><label>Description</label><textarea name="description" placeholder="Additional context for testers">${value("description")}</textarea></div>
       <div class="field full"><label>Preconditions</label><textarea name="preconditions" placeholder="Required setup before execution">${value("preconditions")}</textarea></div>
@@ -1163,6 +1175,8 @@ async function caseForm(existing = null, steps = []) {
       title: fields.title, folder_id: fields.folder_id, priority: fields.priority, test_type: fields.test_type,
       tags: fields.tags.split(",").map((tag) => tag.trim()).filter(Boolean),
       objective: fields.objective, description: fields.description, preconditions: fields.preconditions,
+      automation_status: fields.automation_status, automation_reference: fields.automation_reference,
+      requirement_ids: [...form.querySelectorAll('input[name="requirement_ids"]:checked')].map((box) => box.value),
       // Step inputs share the name "expected_result", so read the case-level field directly.
       expected_result: form.querySelector('textarea[name="expected_result"]').value,
       steps: formSteps,
@@ -1245,6 +1259,8 @@ async function viewCase(id, tab = "details") {
         <div><span class="detail-label">Type</span><strong>${esc(testCase.test_type || "—")}</strong></div>
         <div><span class="detail-label">Module</span><strong>${esc(details.folder_path || "—")}</strong></div>
         <div><span class="detail-label">Tags</span><strong>${esc(tags || "—")}</strong></div>
+        <div><span class="detail-label">Automation</span><strong>${esc(testCase.automation_status || "Not Automated")}</strong>${testCase.automation_reference ? `<small>${esc(testCase.automation_reference)}</small>` : ""}</div>
+        <div><span class="detail-label">Requirements</span><strong id="caseReqs">${(testCase.requirement_ids || []).length ? `${testCase.requirement_ids.length} linked` : "—"}</strong></div>
         <div><span class="detail-label">Created</span><strong>${esc(details.created_by_name)}</strong><small>${esc(fmtDate(testCase.created_at))}</small></div>
         <div><span class="detail-label">Last updated</span><strong>${esc(details.updated_by_name)}</strong><small>${esc(fmtDate(testCase.updated_at))}</small></div>
       </div>
@@ -1264,6 +1280,12 @@ async function viewCase(id, tab = "details") {
     `<div class="heading-actions"><button class="button secondary" onclick="go('repository')">Back</button>${canEdit ? `<button class="button secondary" onclick="editCase(${jsArg(testCase.id)})">Edit</button>` : ""}${testCase.archived === true ? "" : transitionButtons}</div>`) +
     `${banner}<section class="panel detail-panel"><div class="tabs" role="tablist">${tabs.map(([key, text]) => `<button role="tab" aria-selected="${key === tab}" class="tab ${key === tab ? "active" : ""}" onclick="viewCase(${jsArg(testCase.id)}, '${key}')">${esc(text)}</button>`).join("")}</div>${body}</section>`;
   if (tab === "files") caseAttachmentsTab(testCase.id);
+  if ((testCase.requirement_ids || []).length && $("#caseReqs")) {
+    apiAll(`/requirements?project_id=${encodeURIComponent(testCase.project_id)}`).then((reqs) => {
+      const keys = reqs.filter((req) => testCase.requirement_ids.includes(req.id)).map((req) => req.key);
+      const slot = $("#caseReqs"); if (slot && keys.length) slot.textContent = keys.join(", ");
+    }).catch(() => {});
+  }
 }
 
 async function showVersion(caseId, version) {
@@ -1381,14 +1403,14 @@ function cycleInfoFields(values = {}, plans = []) {
     <div class="field"><label>Build / version</label><input name="build" maxlength="80" value="${esc(values.build || "")}" placeholder="e.g. 2.5.0"></div>
     <div class="field"><label>Start date</label><input name="start_date" type="date" value="${esc(values.start_date || "")}"></div>
     <div class="field"><label>Target completion date</label><input name="target_date" type="date" value="${esc(values.target_date || values.end_date || "")}"></div>
-    ${plans.length ? `<div class="field"><label>Test plan (optional)</label><select name="plan_id"><option value="">None</option>${plans.map((plan) => `<option value="${esc(plan.id)}" ${plan.id === values.plan_id ? "selected" : ""}>${esc(plan.name)}</option>`).join("")}</select></div>` : ""}
+    ${plans.length ? `<div class="field"><label>Test plan (release / sprint)</label><select name="plan_id"><option value="">No plan</option>${plans.map((plan) => `<option value="${esc(plan.id)}" ${plan.id === values.plan_id ? "selected" : ""}>${esc(plan.name)}</option>`).join("")}</select></div>` : ""}
     <div class="field full"><label>Description</label><textarea name="description" maxlength="2000" placeholder="Scope, goals, or notes for the team">${esc(values.description || "")}</textarea></div>
   </div>`;
 }
 
 async function editCycle(cycleId) {
-  const cycle = await api(`/test_cycles/${encodeURIComponent(cycleId)}`);
-  const values = await openDialog({ title: "Edit cycle details", confirmLabel: "Save", body: cycleInfoFields(cycle) });
+  const [cycle, plans] = await Promise.all([api(`/test_cycles/${encodeURIComponent(cycleId)}`), apiAll(`/test_plans?project_id=${encodeURIComponent(state.project.id)}`)]);
+  const values = await openDialog({ title: "Edit cycle details", confirmLabel: "Save", body: cycleInfoFields(cycle, plans) });
   if (!values) return;
   try {
     await api(`/test_cycles/${encodeURIComponent(cycleId)}`, { method: "PUT", body: JSON.stringify(values) });
@@ -1398,22 +1420,25 @@ async function editCycle(cycleId) {
 }
 
 // ---------------------------------------------------------- create-cycle wizard
-async function cycleWizard(cycleId = "") {
+async function cycleWizard(cycleId = "", options = {}) {
   const cycle = cycleId ? await api(`/test_cycles/${encodeURIComponent(cycleId)}`) : null;
-  const plans = cycle ? [] : await apiAll(`/test_plans?project_id=${encodeURIComponent(state.project.id)}`);
-  wiz = { cycle, plans, step: cycle ? 2 : 1, info: {}, modules: new Set(), include: new Set(), exclude: new Set(), includeUnapproved: false,
-    data: null, focus: "", moduleQuery: "", caseQuery: "", collapsed: new Set(), preview: null };
+  const [plans, suites] = await Promise.all([cycle ? [] : apiAll(`/test_plans?project_id=${encodeURIComponent(state.project.id)}`), api(`/suites?project_id=${encodeURIComponent(state.project.id)}`).then((r) => r.items).catch(() => [])]);
+  const suite = options.suite || null;
+  wiz = { mode: "cycle", cycle, plans, suites, step: cycle ? 2 : 1, info: { plan_id: options.planId || "" }, modules: new Set(suite?.module_ids || []), include: new Set(suite?.case_ids || []), exclude: new Set(), includeUnapproved: false,
+    data: null, focus: "", moduleQuery: "", caseQuery: "", collapsed: new Set(), preview: null, suiteRefs: suite ? [suite.id] : [] };
   renderWizard();
 }
 
 function wizardSteps() {
+  if (wiz.mode === "suite") return "";
   const steps = wiz.cycle ? [[2, "Select test cases"], [3, "Preview"], [4, "Confirm"]] : [[1, "Cycle details"], [2, "Select test cases"], [3, "Preview"], [4, "Confirm"]];
   return `<ol class="stepper">${steps.map(([number, label], index) => `<li class="${number === wiz.step ? "current" : number < wiz.step ? "done" : ""}" ${number === wiz.step ? 'aria-current="step"' : ""}><span>${index + 1}</span>${esc(label)}</li>`).join("")}</ol>`;
 }
 
 async function renderWizard() {
-  const title = wiz.cycle ? `Add test cases to ${wiz.cycle.name}` : "Create test cycle";
-  const cancel = `<button class="button secondary" onclick="wiz = null; go('execution')">Cancel</button>`;
+  const suiteMode = wiz.mode === "suite";
+  const title = suiteMode ? (wiz.suite ? `Edit suite “${wiz.suite.name}”` : "New test suite") : wiz.cycle ? `Add test cases to ${wiz.cycle.name}` : "Create test cycle";
+  const cancel = `<button class="button secondary" onclick="wiz = null; go('${suiteMode ? "suites" : "execution"}')">Cancel</button>`;
   let body = "";
   if (wiz.step === 1) {
     body = `<form id="wizInfo" class="panel form-panel">${cycleInfoFields(wiz.info, wiz.plans)}<p id="wizError" class="form-error" role="alert"></p><div class="form-actions">${cancel}<button class="button">Next: select test cases</button></div></form>`;
@@ -1428,12 +1453,13 @@ async function renderWizard() {
       <div class="wizard-select-head">
         <label class="filter search-filter"><span class="visually-hidden">Search modules</span><input id="wizModuleSearch" type="search" placeholder="Search modules" value="${esc(wiz.moduleQuery)}"></label>
         <label class="filter search-filter"><span class="visually-hidden">Find test cases</span><input id="wizCaseSearch" type="search" placeholder="Find test cases by ID or title" value="${esc(wiz.caseQuery)}"></label>
+        ${!suiteMode && (wiz.suites || []).length ? `<label class="filter"><span class="visually-hidden">Add a saved suite</span><select id="wizSuite" aria-label="Add a saved suite"><option value="">+ Add a saved suite…</option>${wiz.suites.map((item) => `<option value="${esc(item.id)}">${esc(item.name)} (${item.eligible})</option>`).join("")}</select></label>` : ""}
         <button class="button secondary small" onclick="wizSelectAll()">Select all modules</button><button class="button secondary small" onclick="wizClear()">Clear selection</button>
         ${can("approvals.decide") ? `<label class="checkbox-filter"><input type="checkbox" id="wizUnapproved" aria-label="Include test cases that are not approved" ${wiz.includeUnapproved ? "checked" : ""}> Include Draft and Pending test cases</label>` : ""}
       </div>
       ${excluded ? `<p class="muted wizard-note">Not available for selection: ${esc(excluded)}.${wiz.includeUnapproved ? "" : " Only approved test cases in approved modules can be added."}</p>` : ""}
       <div class="wizard-panes"><div class="wizard-tree" id="wizTree"></div><div class="wizard-cases" id="wizCases"></div></div>
-      <div class="wizard-footer"><div id="wizSummary" aria-live="polite"></div><div class="heading-actions">${cancel}${wiz.cycle ? "" : '<button class="button secondary" onclick="wizGo(1)">Back</button>'}<button class="button" id="wizNext" onclick="wizPreview()">Next: preview</button></div></div>
+      <div class="wizard-footer"><div id="wizSummary" aria-live="polite"></div><div class="heading-actions">${cancel}${suiteMode ? '<button class="button" id="wizNext" onclick="saveSuite()">Save suite</button>' : `${can("plans.write") ? '<button class="button secondary" onclick="saveSuite()" title="Save this selection as a reusable suite">Save as suite</button>' : ""}${wiz.cycle ? "" : '<button class="button secondary" onclick="wizGo(1)">Back</button>'}<button class="button" id="wizNext" onclick="wizPreview()">Next: preview</button>`}</div></div>
     </section>`;
   } else if (wiz.step === 3) {
     const p = wiz.preview;
@@ -1458,7 +1484,7 @@ async function renderWizard() {
       <p id="wizError" class="form-error" role="alert"></p>
       <div class="form-actions">${cancel}<button class="button secondary" onclick="wizGo(3)">Back</button><button class="button" id="wizCreate" onclick="wizCreate()">${wiz.cycle ? `Add ${p.total} test case${p.total === 1 ? "" : "s"}` : "Create cycle"}</button></div></section>`;
   }
-  $("#app").innerHTML = heading(title, wiz.cycle ? "Pick more test cases from the repository. Test cases already in the cycle are skipped." : "Choose modules from the master repository; their eligible test cases are added automatically.") + wizardSteps() + body;
+  $("#app").innerHTML = heading(title, suiteMode ? "Tick modules to include all their test cases (now and in future), or pick individual test cases." : wiz.cycle ? "Pick more test cases from the repository. Test cases already in the cycle are skipped." : "Choose modules from the master repository; their eligible test cases are added automatically.") + wizardSteps() + body;
   associateFormLabels();
   if (wiz.step === 1) {
     $("#wizInfo").onsubmit = (event) => {
@@ -1474,6 +1500,8 @@ async function renderWizard() {
   } else if (wiz.step === 2) {
     $("#wizModuleSearch").oninput = (event) => { wiz.moduleQuery = event.target.value; drawWizTree(); };
     $("#wizCaseSearch").oninput = (event) => { wiz.caseQuery = event.target.value; drawWizCases(); };
+    const suitePicker = $("#wizSuite");
+    if (suitePicker) suitePicker.onchange = () => { if (suitePicker.value) applySuiteToWizard(suitePicker.value); suitePicker.value = ""; };
     const unapproved = $("#wizUnapproved");
     if (unapproved) unapproved.onchange = () => { wiz.includeUnapproved = unapproved.checked; wiz.data = null; renderWizard(); };
     drawWizTree(); drawWizCases(); drawWizSummary();
@@ -1620,7 +1648,7 @@ function wizSelectAll() {
 function wizClear() { wiz.modules.clear(); wiz.include.clear(); wiz.exclude.clear(); wizRedraw(); }
 
 function wizSelection() {
-  return { module_ids: [...wiz.modules], include_case_ids: [...wiz.include], exclude_case_ids: [...wiz.exclude], include_unapproved: wiz.includeUnapproved };
+  return { module_ids: [...wiz.modules], include_case_ids: [...wiz.include], exclude_case_ids: [...wiz.exclude], include_unapproved: wiz.includeUnapproved, suite_refs: wiz.suiteRefs || [] };
 }
 
 async function wizPreview() {
@@ -2046,7 +2074,7 @@ async function openExecution(runId, { keepDraft = false } = {}) {
       <p id="stepHint" class="muted step-hint"></p>
       <div class="field"><label for="execActual">Actual result</label><textarea id="execActual" maxlength="4000" placeholder="What actually happened">${esc(run.actual_result || "")}</textarea></div>
       <div class="field"><label for="execNotes">Execution notes</label><textarea id="execNotes" maxlength="4000" placeholder="Data used, observations, anything the next tester should know">${esc(run.execution_notes || "")}</textarea></div>
-      <div class="field"><label for="execDefects">Defect IDs or links</label><input id="execDefects" placeholder="e.g. PAY-412, https://jira.example.com/browse/PAY-413" value="${esc(defectList(run.defect_ids).join(", "))}"></div>
+      <div class="field"><label for="execDefects">Defects</label><input id="execDefects" placeholder="e.g. LMS-DEF-0001, PAY-412" value="${esc(defectList(run.defect_ids).join(", "))}"><span class="defect-actions"><button type="button" class="link" onclick="logDefectFromExecution(${jsArg(run.id)}, ${jsArg(run.case_key || "")}, ${jsArg(run.case_title || testCase.title || "")})">+ Log defect</button><button type="button" class="link" onclick="linkDefectFromExecution(${jsArg(run.id)})">Link existing</button></span></div>
       <div class="field"><span class="detail-label">Evidence</span><div class="evidence-drop" id="evidenceDrop" tabindex="0" aria-label="Add evidence: paste a screenshot or choose files"><strong>Paste a screenshot</strong> (Ctrl+V) or <label class="link file-link">choose files<input id="evidenceInput" type="file" multiple class="visually-hidden"></label><small class="muted">Images, PDF, logs, HAR, Office files, ZIP or video · 10 MB each</small></div><div id="evidenceList"></div></div>
       <p id="execError" class="form-error" role="alert"></p>
       <div class="form-actions"><button class="button secondary" id="saveResult">Save result</button>${next ? '<button class="button" id="saveNext">Save &amp; next</button>' : ""}</div></section>`
@@ -2893,7 +2921,7 @@ function bindRepositoryExtras() {
     search.oninput = apply;
     if (search.value) apply();
   }
-  document.querySelectorAll("tr.case-row").forEach((row) => {
+  document.querySelectorAll("tr.case-row[data-case-row]").forEach((row) => {  // repository rows only
     row.onclick = (event) => {
       if (event.target.closest("button, select, input, a, label")) return;
       viewCase(row.dataset.caseRow);
@@ -2930,15 +2958,18 @@ function priorityTag(priority) {
 
 async function execution() {
   const projectId = encodeURIComponent(state.project.id);
-  const [runs, cycles, cases] = await Promise.all([
+  const [runs, cycles, cases, plans] = await Promise.all([
     apiAll(`/test_runs?project_id=${projectId}`),
     apiAll(`/test_cycles?project_id=${projectId}`),
     apiAll(`/test_cases?project_id=${projectId}`),
+    apiAll(`/test_plans?project_id=${projectId}`),
   ]);
+  state.planNames = Object.fromEntries(plans.map((plan) => [plan.id, plan.name]));
   const manage = can("cycles.write");
   if (state.selectedCycle && !cycles.some((cycle) => cycle.id === state.selectedCycle)) state.selectedCycle = "";
   const caseById = new Map(cases.map((testCase) => [testCase.id, testCase]));
   const cycleById = new Map(cycles.map((cycle) => [cycle.id, cycle]));
+  state.cycleNames = Object.fromEntries(cycles.map((item) => [item.id, item.name]));
   const cycle = cycleById.get(state.selectedCycle);
   let summary = null;
   cycleData = null;
@@ -2985,10 +3016,13 @@ async function execution() {
 function cycleOverview(cycle, summary, manage) {
   const counts = summary.counts;
   const meta = [cycle.environment && ["Environment", cycle.environment], cycle.build && ["Build", cycle.build], (cycle.start_date || cycle.end_date) && ["Dates", `${cycle.start_date || "?"} → ${cycle.end_date || "?"}`]].filter(Boolean);
+  const planLink = cycle.plan_id && state.planNames?.[cycle.plan_id] ? `<span><span class="muted">Plan</span> <button class="link" onclick="openPlan(${jsArg(cycle.plan_id)})">${esc(state.planNames[cycle.plan_id])}</button></span>` : `<span class="muted">No plan${manage ? ` · <button class="link" onclick="editCycle(${jsArg(cycle.id)})">Add to a plan</button>` : ""}</span>`;
+  const sourceLink = cycle.source_cycle_id ? `<span><span class="muted">Retest of</span> <button class="link" onclick="openCycle(${jsArg(cycle.source_cycle_id)})">${esc(state.cycleNames?.[cycle.source_cycle_id] || "previous cycle")}</button></span>` : "";
+  const retestable = (counts.Failed || 0) + (counts.Blocked || 0);
   return `<section class="panel cycle-head">
       <div class="cycle-head-top"><div class="cycle-title"><h2>${esc(cycle.name)}</h2>${cycle.testing_type ? `<span class="type-pill">${esc(cycle.testing_type)}</span>` : ""}${manage ? `<select class="cycle-status" aria-label="Cycle status" onchange="setCycleStatus(${jsArg(cycle.id)}, this)">${["Not Started", "In Progress", "Completed"].map((item) => `<option ${item === (cycle.status || "Not Started") ? "selected" : ""}>${item}</option>`).join("")}</select>` : status(cycle.status || "Not Started")}</div>
-        ${manage ? `<div class="heading-actions"><button class="button secondary small" onclick="editCycle(${jsArg(cycle.id)})">Edit details</button>${cycle.status === "Completed" ? "" : `<button class="button small" onclick="cycleWizard(${jsArg(cycle.id)})">+ Add test cases</button>`}</div>` : ""}</div>
-      <p class="cycle-meta">${meta.length ? meta.map(([label, value]) => `<span><span class="muted">${label}</span> ${esc(value)}</span>`).join("") : `<span class="muted">No environment, build or dates set${manage ? ' · <button class="link" onclick="editCycle(' + esc(JSON.stringify(cycle.id)) + ')">Add them</button>' : ""}</span>`}</p>
+        ${manage ? `<div class="heading-actions">${retestable ? `<button class="button secondary small" onclick="retestCycle(${jsArg(cycle.id)})" title="Create a Retesting cycle from failed and blocked results">↻ Retest ${retestable}</button>` : ""}<button class="button secondary small" onclick="editCycle(${jsArg(cycle.id)})">Edit details</button>${cycle.status === "Completed" ? "" : `<button class="button small" onclick="cycleWizard(${jsArg(cycle.id)})">+ Add test cases</button>`}</div>` : ""}</div>
+      <p class="cycle-meta">${planLink}${sourceLink}${meta.length ? meta.map(([label, value]) => `<span><span class="muted">${label}</span> ${esc(value)}</span>`).join("") : `<span class="muted">No environment, build or dates set${manage ? ' · <button class="link" onclick="editCycle(' + esc(JSON.stringify(cycle.id)) + ')">Add them</button>' : ""}</span>`}</p>
       ${cycle.description ? `<p class="prewrap cycle-desc">${esc(cycle.description)}</p>` : ""}
       <div class="kpis">
         <div><strong>${summary.completion}%</strong><span>complete · ${summary.executed} of ${summary.total} executed</span></div>
@@ -3012,6 +3046,301 @@ function cycleRunRows() {
     <td>${shortModule(run.module_path)}</td><td>${priorityTag(run.priority)}</td><td>${ownerChip(run)}</td><td>${runStatusSelect(run, run.case_key)}</td>
     ${manage ? `<td class="row-actions">${removable && (run.status || "Not Run") === "Not Run" ? `<button class="icon-button remove-run" title="Remove from this cycle" aria-label="Remove ${esc(run.case_key)} from this cycle" onclick="removeRun(${jsArg(run.id)}, ${jsArg(run.case_key)})">✕</button>` : ""}</td>` : ""}
   </tr>`).join("");
+}
+
+// ------------------------------------------------------------------ test plans
+const PLAN_STATUSES = ["Draft", "Active", "Completed"];
+const CRITERIA_FIELDS = [["min_execution_pct", "Planned test cases executed", "%", "≥"], ["min_pass_rate", "Pass rate of executed", "%", "≥"], ["max_open_critical", "Open Critical defects", "", "≤"], ["max_open_high", "Open High defects", "", "≤"], ["max_blocked", "Blocked test cases", "", "≤"]];
+
+function verdictBadge(verdict) {
+  const tone = { Ready: "approved", "Not ready": "failed", "Not started": "not-run", "No test cases": "not-run" }[verdict] || "not-run";
+  return `<span class="badge ${tone} verdict">${esc(verdict)}</span>`;
+}
+
+async function plansPage() {
+  if (state.planId) return planDetail(state.planId);
+  const { items } = await api(`/plans?project_id=${encodeURIComponent(state.project.id)}`);
+  const manage = can("plans.write");
+  const rows = items.map((plan) => `<tr class="case-row" data-plan="${esc(plan.id)}">
+      <td><button class="case-title" onclick="openPlan(${jsArg(plan.id)})">${esc(plan.name)}</button>${plan.release ? `<span class="type-pill">Release ${esc(plan.release)}</span>` : ""}<small class="muted block">${esc([plan.start_date, plan.end_date].filter(Boolean).join(" → ") || "No dates")}</small></td>
+      <td>${status(plan.status || "Draft")}</td><td class="num">${plan.cycles}</td>
+      <td class="plan-progress">${stackedBar(plan.counts, plan.planned, { thin: true, label: plan.name })}<small>${plan.executed} of ${plan.planned} executed · ${plan.execution_pct}%</small></td>
+      <td>${plan.executed ? `${plan.pass_rate}%` : "—"}</td><td class="${plan.open_defects ? "bad-text" : ""}">${plan.open_defects}</td><td>${verdictBadge(plan.verdict)}</td></tr>`).join("");
+  return `<div class="repo-head"><div><nav class="crumbs"><span>${esc(state.project.key)}</span><span aria-hidden="true">›</span><span>Test Plans</span></nav><h1>Test Plans</h1>
+      <p class="repo-stats"><span>A plan is one release or sprint: its cycles, scope, progress and readiness.</span></p></div>
+      ${manage ? '<div class="repo-actions"><button class="button small" onclick="editPlan()">+ New test plan</button></div>' : ""}</div>
+    <section class="panel">${items.length ? `<div class="table-wrap"><table class="case-table plans-table"><thead><tr><th>Plan</th><th>Status</th><th class="num">Cycles</th><th>Progress (latest result per test case)</th><th>Pass rate</th><th>Open defects</th><th>Readiness</th></tr></thead><tbody>${rows}</tbody></table></div>`
+      : `<div class="empty">No test plans yet.${manage ? ' <button class="link" onclick="editPlan()">Create the first plan</button> for your next release or sprint.' : ""}</div>`}</section>`;
+}
+
+function openPlan(planId) { state.planId = planId; state.keepPlan = true; go("plans"); }
+
+async function editPlan(planId = "") {
+  const plan = planId ? (await api(`/plans/${encodeURIComponent(planId)}/report`)).plan : { status: "Draft", exit_criteria: { min_execution_pct: 100, min_pass_rate: 95, max_open_critical: 0, max_open_high: 0, max_blocked: 0 } };
+  const criteria = plan.exit_criteria || {};
+  const values = await openDialog({ title: planId ? "Edit test plan" : "New test plan", confirmLabel: planId ? "Save" : "Create plan", body: `<div class="form-grid">
+      <div class="field full"><label>Plan name *</label><input name="name" required maxlength="150" value="${esc(plan.name || "")}" placeholder="e.g. Release 2.5"></div>
+      <div class="field"><label>Release / sprint</label><input name="release" maxlength="80" value="${esc(plan.release || "")}" placeholder="2.5"></div>
+      <div class="field"><label>Status</label><select name="status">${PLAN_STATUSES.map((item) => `<option ${item === (plan.status || "Draft") ? "selected" : ""}>${item}</option>`).join("")}</select></div>
+      <div class="field"><label>Start date</label><input name="start_date" type="date" value="${esc(plan.start_date || "")}"></div>
+      <div class="field"><label>End date</label><input name="end_date" type="date" value="${esc(plan.end_date || "")}"></div>
+      <div class="field full"><label>Scope</label><textarea name="scope" maxlength="4000" placeholder="What is in and out of scope for this release">${esc(plan.scope || "")}</textarea></div>
+      <fieldset class="field full criteria"><legend>Exit criteria — when is this release ready?</legend>${CRITERIA_FIELDS.map(([key, label, unit, op]) => `<label class="criterion">${esc(label)} <span class="muted">${op}</span><input name="crit_${key}" type="number" min="0" ${unit ? 'max="100"' : ""} step="1" value="${esc(criteria[key] ?? "")}">${unit}</label>`).join("")}</fieldset>
+    </div>` });
+  if (!values) return;
+  const payload = { name: values.name, release: values.release, status: values.status, start_date: values.start_date, end_date: values.end_date, scope: values.scope,
+    exit_criteria: Object.fromEntries(CRITERIA_FIELDS.map(([key]) => [key, Number(values[`crit_${key}`] || 0)])) };
+  try {
+    const saved = planId ? await api(`/test_plans/${encodeURIComponent(planId)}`, { method: "PUT", body: JSON.stringify(payload) })
+      : await api("/plans", { method: "POST", body: JSON.stringify({ project_id: state.project.id, ...payload }) });
+    toast(planId ? "Plan updated" : `${saved.name} created`);
+    state.planId = saved.id; state.keepPlan = true; await go("plans");
+  } catch (error) { toast(error.message); }
+}
+
+async function planDetail(planId) {
+  let report;
+  try { report = await api(`/plans/${encodeURIComponent(planId)}/report`); }
+  catch (error) { state.planId = ""; return plansPage(); }
+  const p = report.plan, manage = can("plans.write"), cycles = can("cycles.write");
+  const pct = (part, whole) => (whole ? Math.round(part * 100 / whole) : 0);
+  const cycleRows = report.cycles.map((cycle) => `<tr class="case-row"><td><button class="case-title" onclick="openCycle(${jsArg(cycle.id)})">${esc(cycle.name)}</button>${cycle.source_cycle_id ? '<small class="muted block">Retest cycle</small>' : ""}</td>
+      <td><span class="type-pill">${esc(cycle.testing_type || "—")}</span></td><td>${esc(cycle.build || "—")}</td><td>${status(cycle.status || "Not Started")}</td>
+      <td class="plan-progress">${stackedBar(cycle.counts, cycle.total, { thin: true, label: cycle.name })}<small>${cycle.executed}/${cycle.total} · ${cycle.completion}%</small></td><td>${cycle.executed ? `${cycle.pass_rate}%` : "—"}</td></tr>`).join("");
+  const people = report.testers.map((t) => `<tr><td>${esc(t.name)}</td><td class="num">${t.total}</td><td class="plan-progress">${progressBar(pct(t.executed, t.total), t.name)}<small>${t.executed}/${t.total}</small></td><td class="num">${t.passed}</td><td class="num ${t.failed ? "bad-text" : ""}">${t.failed}</td><td class="num ${t.blocked ? "warn-text" : ""}">${t.blocked}</td></tr>`).join("");
+  const modules = report.modules.map((m) => `<tr><td>${shortModule(m.path)}</td><td class="num">${m.total}</td><td class="plan-progress">${progressBar(pct(m.executed, m.total), m.path)}<small>${m.executed}/${m.total}</small></td><td class="num">${m.passed}</td><td class="num ${m.failed ? "bad-text" : ""}">${m.failed}</td><td class="num ${m.blocked ? "warn-text" : ""}">${m.blocked}</td></tr>`).join("");
+  const openDefects = report.defects.items.filter((d) => d.is_open);
+  const defectRows = report.defects.items.map((d) => `<tr class="case-row" onclick="openDefect(${jsArg(d.id)})"><td class="case-id-cell"><span class="case-id">${esc(d.key)}</span></td><td>${esc(d.summary)}</td><td>${severityTag(d.severity)}</td><td>${status(d.status)}</td><td>${d.retest ? esc(d.retest) : '<span class="muted">—</span>'}</td></tr>`).join("");
+  const r = report.readiness;
+  return `<div class="repo-head"><div><nav class="crumbs"><span>${esc(state.project.key)}</span><span aria-hidden="true">›</span><button class="link-plain" onclick="state.planId=''; render()">Test Plans</button><span aria-hidden="true">›</span><span>${esc(p.name)}</span></nav>
+      <h1>${esc(p.name)} ${p.release ? `<span class="type-pill">Release ${esc(p.release)}</span>` : ""} ${status(p.status || "Draft")}</h1>
+      <p class="repo-stats"><span>${esc([p.start_date, p.end_date].filter(Boolean).join(" → ") || "No dates set")}</span><span><strong>${report.cycles.length}</strong> cycles</span><span><strong>${report.planned}</strong> test cases planned</span></p></div>
+      <div class="repo-actions">${can("reports.export") ? `<a class="button secondary small" href="/api/plans/${esc(p.id)}/export.xlsx" download>⇩ Export Excel</a>` : ""}${manage ? `<button class="button secondary small" onclick="editPlan(${jsArg(p.id)})">Edit plan</button>` : ""}${cycles ? `<button class="button small" onclick="cycleWizard('', { planId: ${esc(JSON.stringify(p.id))} })">+ Create cycle in this plan</button>` : ""}</div></div>
+    ${p.scope ? `<section class="panel plan-scope"><span class="detail-label">Scope</span><p class="prewrap">${esc(p.scope)}</p></section>` : ""}
+    <div class="plan-top">
+      <section class="panel readiness ${r.verdict === "Ready" ? "ready" : r.verdict === "Not ready" ? "not-ready" : ""}"><div class="readiness-head"><div><span class="detail-label">Release readiness</span><strong class="verdict-text">${esc(r.verdict)}</strong></div>${manage ? `<button class="link" onclick="editPlan(${jsArg(p.id)})">Edit exit criteria</button>` : ""}</div>
+        <table class="criteria-table"><tbody>${r.checks.map((check) => `<tr><td><span class="check ${check.ok ? "ok" : "no"}" aria-label="${check.ok ? "Met" : "Not met"}">${check.ok ? "✓" : "✗"}</span></td><td>${esc(check.label)}</td><td class="muted">${esc(check.target)}</td><td><strong>${esc(check.actual)}</strong></td></tr>`).join("")}</tbody></table></section>
+      <section class="panel cycle-head"><div class="kpis"><div><strong>${report.execution_pct}%</strong><span>executed · ${report.executed} of ${report.planned}</span></div><div><strong>${report.executed ? `${report.pass_rate}%` : "—"}</strong><span>pass rate</span></div><div><strong class="${openDefects.length ? "bad-text" : ""}">${openDefects.length}</strong><span>open defects</span></div></div>
+        ${stackedBar(report.counts, report.planned, { label: p.name })}${progressLegend(report.counts)}<p class="muted panel-foot">Each test case counts once, with its latest result across all cycles in this plan.</p></section>
+    </div>
+    <section class="panel section-gap"><div class="panel-head"><h2>Cycles</h2>${cycles ? `<button class="button secondary small" onclick="cycleWizard('', { planId: ${esc(JSON.stringify(p.id))} })">+ Create cycle</button>` : ""}</div>
+      ${report.cycles.length ? `<div class="table-wrap"><table class="case-table exec-table"><thead><tr><th>Cycle</th><th>Type</th><th>Build</th><th>Status</th><th>Progress</th><th>Pass rate</th></tr></thead><tbody>${cycleRows}</tbody></table></div>` : '<div class="empty">No cycles in this plan yet. Create a Smoke, Sanity or Regression cycle to start.</div>'}</section>
+    <div class="dash-grid two section-gap">
+      <section class="panel"><div class="panel-head"><h2>Testers</h2></div>${people ? `<div class="table-wrap"><table class="progress-table"><thead><tr><th>Tester</th><th class="num">Assigned</th><th>Executed</th><th class="num">Passed</th><th class="num">Failed</th><th class="num">Blocked</th></tr></thead><tbody>${people}</tbody></table></div>` : '<div class="empty">No assignments yet.</div>'}</section>
+      <section class="panel"><div class="panel-head"><h2>Modules</h2></div>${modules ? `<div class="table-wrap"><table class="progress-table"><thead><tr><th>Module</th><th class="num">Cases</th><th>Executed</th><th class="num">Passed</th><th class="num">Failed</th><th class="num">Blocked</th></tr></thead><tbody>${modules}</tbody></table></div>` : '<div class="empty">No test cases yet.</div>'}</section>
+    </div>
+    <section class="panel section-gap"><div class="panel-head"><h2>Defects found in this plan</h2><span class="muted">${openDefects.length} open of ${report.defects.items.length}${report.defects.unregistered.length ? ` · ${report.defects.unregistered.length} unregistered reference${report.defects.unregistered.length === 1 ? "" : "s"} (${esc(report.defects.unregistered.slice(0, 5).join(", "))})` : ""}</span></div>
+      ${defectRows ? `<div class="table-wrap"><table class="case-table"><thead><tr><th class="id-col">Defect</th><th>Summary</th><th>Severity</th><th>Status</th><th>Retest</th></tr></thead><tbody>${defectRows}</tbody></table></div>` : '<div class="empty">No defects linked to this plan\'s executions.</div>'}</section>`;
+}
+
+function openCycle(cycleId) { state.selectedCycle = cycleId; state.cycleTab = "cases"; go("execution"); }
+
+async function retestCycle(cycleId) {
+  const cycle = await api(`/test_cycles/${encodeURIComponent(cycleId)}`);
+  const values = await openDialog({ title: "Retest failed and blocked test cases", confirmLabel: "Create retest cycle", body: `<p class="muted">Creates a Retesting cycle in the same plan with the selected test cases. Each keeps its tester; results in “${esc(cycle.name)}” are not changed.</p>
+      <div class="form-grid"><div class="field full"><label>Retest these results</label><span class="check-row"><label><input type="checkbox" name="failed" checked> Failed</label><label><input type="checkbox" name="blocked" checked> Blocked</label></span></div>
+      <div class="field"><label>New cycle name</label><input name="name" maxlength="150" placeholder="${esc(cycle.name)} – Retest"></div><div class="field"><label>Build with the fix</label><input name="build" maxlength="80" value="${esc(cycle.build || "")}"></div></div>` });
+  if (!values) return;
+  const statuses = [values.failed && "Failed", values.blocked && "Blocked"].filter(Boolean);
+  if (!statuses.length) { toast("Choose Failed and/or Blocked"); return; }
+  try {
+    const result = await api(`/cycles/${encodeURIComponent(cycleId)}/retest`, { method: "POST", body: JSON.stringify({ statuses, name: values.name, build: values.build }) });
+    toast(`${result.cycle.name} created with ${result.added} test case${result.added === 1 ? "" : "s"}`);
+    openCycle(result.cycle.id);
+  } catch (error) { toast(error.message); }
+}
+
+// ------------------------------------------------------------------ test suites
+async function suitesPage() {
+  const { items } = await api(`/suites?project_id=${encodeURIComponent(state.project.id)}`);
+  const manage = can("plans.write"), cycles = can("cycles.write");
+  const rows = items.map((suite) => `<tr>
+      <td><strong>${esc(suite.name)}</strong>${suite.description ? `<small class="muted block">${esc(suite.description)}</small>` : ""}</td>
+      <td>${suite.modules.length ? suite.modules.map((path) => `<span class="tag" title="${esc(path)}">${esc(path.split("/").filter(Boolean).at(-1) || path)}</span>`).join(" ") : '<span class="muted">—</span>'}${suite.case_ids.length ? `<small class="muted block">+ ${suite.case_ids.length} picked test case${suite.case_ids.length === 1 ? "" : "s"}</small>` : ""}</td>
+      <td class="num"><strong>${suite.eligible}</strong>${Object.keys(suite.excluded).length ? `<small class="muted block" title="Not approved, deprecated or in an unapproved module">${Object.values(suite.excluded).reduce((a, b) => a + b, 0)} not eligible</small>` : ""}</td>
+      <td>${suite.cycles.length ? suite.cycles.map((c) => `<button class="link" onclick="openCycle(${jsArg(c.id)})">${esc(c.name)}</button>`).join(", ") : '<span class="muted">Not used yet</span>'}</td>
+      <td class="row-actions">${cycles ? `<button class="button small" onclick="cycleWizard('', { suite: ${esc(JSON.stringify({ id: suite.id, module_ids: suite.module_ids, case_ids: suite.case_ids }))} })">Create cycle</button>` : ""}${manage ? `<button class="button secondary small" onclick="suiteWizard(${jsArg(suite.id)})">Edit</button><button class="icon-button remove-run" title="Delete suite" aria-label="Delete suite ${esc(suite.name)}" onclick="deleteSuite(${jsArg(suite.id)}, ${jsArg(suite.name)})">✕</button>` : ""}</td></tr>`).join("");
+  return `<div class="repo-head"><div><nav class="crumbs"><span>${esc(state.project.key)}</span><span aria-hidden="true">›</span><span>Test Suites</span></nav><h1>Test Suites</h1>
+      <p class="repo-stats"><span>Reusable sets of modules and test cases. Use one to build a Smoke, Sanity or Regression cycle in any release; newly approved test cases in its modules are included automatically.</span></p></div>
+      ${manage ? '<div class="repo-actions"><button class="button small" onclick="suiteWizard()">+ New suite</button></div>' : ""}</div>
+    <section class="panel">${items.length ? `<div class="table-wrap"><table class="case-table"><thead><tr><th>Suite</th><th>Contents</th><th class="num">Eligible test cases</th><th>Used in cycles</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
+      : `<div class="empty">No suites yet.${manage ? ' <button class="link" onclick="suiteWizard()">Create a suite</button>, e.g. “Payment smoke” or “Full regression”.' : ""}</div>`}</section>`;
+}
+
+async function suiteWizard(suiteId = "") {
+  const suite = suiteId ? (await api(`/suites?project_id=${encodeURIComponent(state.project.id)}`)).items.find((item) => item.id === suiteId) : null;
+  wiz = { mode: "suite", suite, cycle: null, plans: [], step: 2, info: {}, modules: new Set(suite?.module_ids || []), include: new Set(suite?.case_ids || []), exclude: new Set(),
+    includeUnapproved: can("approvals.decide"), data: null, focus: "", moduleQuery: "", caseQuery: "", collapsed: new Set(), preview: null, suiteRefs: [] };
+  renderWizard();
+}
+
+async function saveSuite() {
+  const fixed = wiz.exclude.size > 0;
+  const selected = wiz.data.cases.filter(wizIsSelected).map((testCase) => testCase.id);
+  const values = await openDialog({ title: wiz.suite ? "Save suite" : "Save as suite", confirmLabel: "Save suite", body: `<div class="field"><label>Suite name *</label><input name="name" required maxlength="150" value="${esc(wiz.suite?.name || "")}" placeholder="e.g. Payment smoke"></div><div class="field"><label>Description</label><input name="description" maxlength="2000" value="${esc(wiz.suite?.description || "")}"></div>
+      ${fixed ? `<p class="notice warn">You unticked some test cases inside a ticked module, so this suite will be saved as a fixed list of the ${selected.length} selected test cases. New test cases added to those modules later won't be included.</p>` : `<p class="muted">Ticked modules stay live: test cases approved in them later are included automatically.</p>`}` });
+  if (!values) return;
+  const body = { project_id: state.project.id, name: values.name, description: values.description, module_ids: fixed ? [] : [...wiz.modules], case_ids: fixed ? selected : [...wiz.include] };
+  try {
+    if (wiz.suite) await api(`/test_suites/${encodeURIComponent(wiz.suite.id)}`, { method: "PUT", body: JSON.stringify(body) });
+    else await api("/suites", { method: "POST", body: JSON.stringify(body) });
+    toast(`Suite “${values.name}” saved`);
+    if (wiz.mode === "suite") { wiz = null; await go("suites"); }
+  } catch (error) { toast(error.message); }
+}
+
+async function deleteSuite(suiteId, name) {
+  const confirmed = await openDialog({ title: `Delete suite “${name}”?`, confirmLabel: "Delete", danger: true, body: "<p>The suite is archived. Cycles already created from it are not affected.</p>" });
+  if (!confirmed) return;
+  try { await api(`/test_suites/${encodeURIComponent(suiteId)}`, { method: "DELETE" }); toast("Suite deleted"); await render(); }
+  catch (error) { toast(error.message); }
+}
+
+async function applySuiteToWizard(suiteId) {
+  const suite = wiz.suites.find((item) => item.id === suiteId);
+  if (!suite) return;
+  suite.module_ids.forEach((id) => wiz.modules.add(id));
+  suite.case_ids.forEach((id) => { wiz.include.add(id); wiz.exclude.delete(id); });
+  if (!wiz.suiteRefs.includes(suite.id)) wiz.suiteRefs.push(suite.id);
+  toast(`Added suite “${suite.name}”`);
+  wizRedraw();
+}
+
+// ---------------------------------------------------------------------- defects
+const SEVERITIES = ["Critical", "High", "Medium", "Low"];
+function severityTag(severity) { return `<span class="priority ${PRIORITY_TONE[severity] || ""}"><i aria-hidden="true"></i>${esc(severity || "—")}</span>`; }
+
+async function defectsPage() {
+  const f = state.defectFilter;
+  const data = await api(`/defects?project_id=${encodeURIComponent(state.project.id)}&status=${encodeURIComponent(f.status)}&severity=${encodeURIComponent(f.severity)}&q=${encodeURIComponent(f.q)}`);
+  state.defectMeta = data;
+  const rows = data.items.map((d) => `<tr class="case-row" onclick="openDefect(${jsArg(d.id)})"><td class="case-id-cell"><span class="case-id">${esc(d.key)}</span>${d.external_key ? `<small class="muted block">${esc(d.external_key)}</small>` : ""}</td>
+      <td><button class="case-title" onclick="openDefect(${jsArg(d.id)})">${esc(d.summary)}</button></td><td>${severityTag(d.severity)}</td><td>${status(d.status)}</td>
+      <td>${d.executions.length ? `${d.executions.length} · <span class="muted">${esc(d.executions.at(-1).case_key)}</span>` : '<span class="muted">—</span>'}</td>
+      <td>${esc(d.found_in_cycle || "—")}</td><td>${esc(d.assignee_name || "—")}</td><td>${d.retest ? `<span class="retest ${d.retest === "Retest passed" ? "ok" : d.retest === "Retest failed" ? "no" : ""}">${esc(d.retest)}</span>` : '<span class="muted">—</span>'}</td></tr>`).join("");
+  const select = (id, label, options, value) => `<label class="filter"><span class="visually-hidden">${label}</span><select id="${id}" aria-label="${label}">${options.map(([v, t]) => `<option value="${esc(v)}" ${v === value ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>`;
+  return `<div class="repo-head"><div><nav class="crumbs"><span>${esc(state.project.key)}</span><span aria-hidden="true">›</span><span>Defects</span></nav><h1>Defects</h1>
+      <p class="repo-stats"><span><strong>${data.summary.open}</strong> open</span><span><strong>${data.summary.fixed}</strong> fixed, awaiting verification</span><span><strong>${data.summary.total}</strong> total</span></p></div>
+      ${can("execution.update") ? '<div class="repo-actions"><button class="button small" onclick="newDefect()">+ Log defect</button></div>' : ""}</div>
+    ${data.unregistered.length ? `<section class="panel notice-panel"><strong>${data.unregistered.length} defect reference${data.unregistered.length === 1 ? "" : "s"} typed on executions ${data.unregistered.length === 1 ? "has" : "have"} no defect record yet.</strong> Register them to track status and retest. <span class="ref-list">${data.unregistered.map((u) => `<span class="ref">${esc(u.reference)} <small class="muted">${u.executions}×</small>${can("execution.update") ? ` <button class="link" onclick="registerDefect(${jsArg(u.reference)})">Register</button>` : ""}</span>`).join("")}</span></section>` : ""}
+    <section class="panel"><div class="filter-bar">
+      <label class="filter search-filter"><span class="visually-hidden">Search defects</span><input id="defectSearch" type="search" placeholder="Search key, Jira key or summary" value="${esc(f.q)}"></label>
+      ${select("defectStatus", "Status", [["__open", "Open (all open states)"], ["", "All statuses"], ...data.statuses.map((s) => [s, s])], f.status)}
+      ${select("defectSeverity", "Severity", [["", "All severities"], ...data.severities.map((s) => [s, s])], f.severity)}
+      <span class="repo-count"><strong>${data.items.length}</strong> shown</span></div>
+      <div class="table-wrap"><table class="case-table exec-table"><thead><tr><th class="id-col">Defect</th><th>Summary</th><th>Severity</th><th>Status</th><th>Executions</th><th>Found in</th><th>Assigned to</th><th>Retest</th></tr></thead><tbody>${rows || `<tr><td colspan="8"><div class="empty">No defects match. Defects are logged from a failed test case on the execution screen, or with “+ Log defect”.</div></td></tr>`}</tbody></table></div></section>`;
+}
+
+function bindDefects() {
+  const search = $("#defectSearch");
+  if (!search) return;
+  let timer = null;
+  search.oninput = () => { clearTimeout(timer); timer = setTimeout(() => { state.defectFilter.q = search.value; render().then(() => { const s = $("#defectSearch"); if (s) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); } }); }, 400); };
+  $("#defectStatus").onchange = (event) => { state.defectFilter.status = event.target.value; render(); };
+  $("#defectSeverity").onchange = (event) => { state.defectFilter.severity = event.target.value; render(); };
+}
+
+function defectFields(values = {}) {
+  const options = (list, value) => list.map((item) => `<option ${item === value ? "selected" : ""}>${item}</option>`).join("");
+  return `<div class="form-grid">
+    <div class="field full"><label>Summary *</label><input name="summary" required maxlength="200" value="${esc(values.summary || "")}"></div>
+    <div class="field"><label>Severity</label><select name="severity">${options(SEVERITIES, values.severity || "Medium")}</select></div>
+    <div class="field"><label>Priority</label><select name="priority">${options(SEVERITIES, values.priority || "Medium")}</select></div>
+    <div class="field"><label>External key (e.g. Jira)</label><input name="external_key" maxlength="120" value="${esc(values.external_key || "")}" placeholder="PAY-412"></div>
+    <div class="field"><label>External link</label><input name="external_url" maxlength="500" value="${esc(values.external_url || "")}" placeholder="https://…"></div>
+    <div class="field full"><label>Description / steps to reproduce</label><textarea name="description" maxlength="8000">${esc(values.description || "")}</textarea></div></div>`;
+}
+
+async function newDefect(runId = "", prefill = {}) {
+  const values = await openDialog({ title: runId ? "Log defect for this test case" : "Log defect", confirmLabel: "Log defect", body: defectFields(prefill) });
+  if (!values) return null;
+  try {
+    const defect = await api("/defects", { method: "POST", body: JSON.stringify({ project_id: state.project.id, run_id: runId, ...values }) });
+    toast(`${defect.key} logged`);
+    if (!runId) await render();
+    return defect;
+  } catch (error) { toast(error.message); return null; }
+}
+
+async function registerDefect(reference) {
+  try { const defect = await api("/defects/register", { method: "POST", body: JSON.stringify({ project_id: state.project.id, reference }) }); toast(`${reference} registered as ${defect.key}`); await render(); }
+  catch (error) { toast(error.message); }
+}
+
+async function openDefect(defectId) {
+  drawerLoading("Defect");
+  let d;
+  try { d = await api(`/defects/${encodeURIComponent(defectId)}`); }
+  catch (error) { openDrawer("Defect", "", `<div class="notice danger">${esc(error.message)}</div>`); return; }
+  const edit = can("execution.update");
+  const statuses = ["Open", "In Progress", "Fixed", "Verified", "Closed", "Reopened", "Rejected"];
+  const members = state.users.filter((user) => user.status === "Active");
+  openDrawer(`${d.key} · ${d.summary}`, `${status(d.status)} ${severityTag(d.severity)} · reported by ${esc(d.reporter_name || "—")} · ${esc(fmtDate(d.created_at))}${d.external_key ? ` · ${d.external_url ? `<a href="${esc(d.external_url)}" target="_blank" rel="noopener noreferrer">${esc(d.external_key)}</a>` : esc(d.external_key)}` : ""}`,
+    `${d.retest ? `<div class="notice ${d.retest === "Retest passed" ? "ok" : d.retest === "Retest failed" ? "danger" : "warn"}"><strong>${esc(d.retest)}.</strong> ${d.retest === "Retest passed" ? "You can mark this defect Verified." : d.retest === "Awaiting retest" ? "Create a retest cycle to check the fix." : "The fix did not hold; consider reopening."}</div>` : ""}
+     ${edit ? `<form id="defectForm" class="dialog-form">${defectFields(d)}<div class="form-grid">
+        <div class="field"><label>Status</label><select name="status">${statuses.map((s) => `<option ${s === d.status ? "selected" : ""}>${s}</option>`).join("")}</select></div>
+        <div class="field"><label>Assigned to</label><select name="assignee_id"><option value="">Unassigned</option>${members.map((user) => `<option value="${esc(user.id)}" ${user.id === d.assignee_id ? "selected" : ""}>${esc(user.name)}</option>`).join("")}</select></div>
+        <div class="field"><label>Found in build</label><input name="build" maxlength="80" value="${esc(d.build || "")}"></div>
+        <div class="field"><label>Fixed in build</label><input name="fixed_in_build" maxlength="80" value="${esc(d.fixed_in_build || "")}"></div></div>
+        <p class="form-error" role="alert"></p><div class="form-actions">${can("cycles.write") && d.executions.length ? `<button type="button" class="button secondary" onclick="retestDefect(${jsArg(d.id)})">Create retest cycle</button>` : ""}<button class="button">Save defect</button></div></form>`
+      : `<p class="prewrap">${esc(d.description || "No description.")}</p>`}
+     <h3 class="confirm-subhead">Linked executions (${d.executions.length})</h3>
+     ${d.executions.length ? `<ul class="failure-list">${d.executions.map((e) => `<li><button class="link case-key" onclick="closeDrawer(); openExecution(${jsArg(e.run_id)})">${esc(e.case_key)}</button> ${status(e.status)} <span class="muted">in ${esc(e.cycle)}${e.executed_at ? ` · ${esc(fmtDate(e.executed_at))}` : ""}</span><div>${esc(plainTitle({ case_key: e.case_key, title: e.title }))}</div></li>`).join("")}</ul>` : '<p class="muted">Not linked to any execution.</p>'}
+     <p class="muted">Found in: ${esc(d.found_in_cycle || "—")} · environment ${esc(d.environment || "—")}${d.resolved_at ? ` · fixed ${esc(fmtDate(d.resolved_at))}` : ""}${d.closed_at ? ` · closed ${esc(fmtDate(d.closed_at))}` : ""}</p>`);
+  const form = $("#defectForm");
+  if (form) form.onsubmit = async (event) => {
+    event.preventDefault();
+    try { await api(`/defects/${encodeURIComponent(d.id)}`, { method: "PUT", body: JSON.stringify(Object.fromEntries(new FormData(form))) }); toast(`${d.key} saved`); closeDrawer(); await render(); }
+    catch (error) { form.querySelector(".form-error").textContent = error.message; }
+  };
+}
+
+async function retestDefect(defectId) {
+  try { const result = await api(`/defects/${encodeURIComponent(defectId)}/retest`, { method: "POST", body: "{}" }); closeDrawer(); toast(`${result.cycle.name} created with ${result.added} test case${result.added === 1 ? "" : "s"}`); openCycle(result.cycle.id); }
+  catch (error) { toast(error.message); }
+}
+
+async function logDefectFromExecution(runId, caseKey, title) {
+  const defect = await newDefect(runId, { summary: `${caseKey} – ${plainTitle({ case_key: caseKey, title })} fails`.slice(0, 200), description: $("#execActual")?.value || "", severity: "Medium" });
+  if (defect) addDefectToExecution(defect.key);
+}
+
+async function linkDefectFromExecution(runId) {
+  const { items } = await api(`/defects?project_id=${encodeURIComponent(state.project.id)}&status=__open`);
+  if (!items.length) { toast("There are no open defects to link. Use Log defect."); return; }
+  const values = await openDialog({ title: "Link an existing defect", confirmLabel: "Link", body: `<div class="field"><label>Open defect</label><select name="defect_id">${items.map((d) => `<option value="${esc(d.id)}">${esc(d.key)} · ${esc(d.summary)}</option>`).join("")}</select></div>` });
+  if (!values) return;
+  try { const defect = await api(`/defects/${encodeURIComponent(values.defect_id)}/link`, { method: "POST", body: JSON.stringify({ run_id: runId }) }); toast(`${defect.key} linked`); addDefectToExecution(defect.key); }
+  catch (error) { toast(error.message); }
+}
+
+function addDefectToExecution(key) {
+  const input = $("#execDefects");
+  if (!input) return;
+  const list = defectList(input.value);
+  if (!list.map((item) => item.toLowerCase()).includes(key.toLowerCase())) input.value = [...list, key].join(", ");
+}
+
+// ---------------------------------------------------------------- requirements
+async function requirementsPage() {
+  const data = await api(`/requirements/coverage?project_id=${encodeURIComponent(state.project.id)}`);
+  state.coverage = data;
+  const tone = { Passing: "approved", Failing: "failed", "Partly tested": "in-progress", "Not run": "not-run", "Not covered": "rejected" };
+  const rows = data.requirements.map((r) => `<tr class="case-row" onclick="openRequirement(${jsArg(r.id)})"><td class="case-id-cell"><span class="case-id">${esc(r.key)}</span></td><td>${esc(r.title)}</td><td>${esc(r.priority || "—")}</td><td>${status(r.status || "Draft")}</td>
+      <td class="num">${r.cases.length}</td><td><span class="badge ${tone[r.coverage] || ""}">${esc(r.coverage)}</span></td></tr>`).join("");
+  return `<div class="repo-head"><div><nav class="crumbs"><span>${esc(state.project.key)}</span><span aria-hidden="true">›</span><span>Requirements</span></nav><h1>Requirements</h1>
+      <p class="repo-stats">${Object.entries(data.summary).map(([label, count]) => `<span><strong>${count}</strong> ${esc(label.toLowerCase())}</span>`).join("")}</p></div>
+      ${can("requirements.write") ? `<div class="repo-actions"><button class="button small" onclick="newEntity('requirements')">+ New requirement</button></div>` : ""}</div>
+    <section class="panel">${data.total ? `<div class="table-wrap"><table class="case-table"><thead><tr><th class="id-col">Key</th><th>Requirement</th><th>Priority</th><th>Status</th><th class="num">Test cases</th><th>Coverage (latest results)</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<div class="empty">No requirements yet. They are also created automatically from the Requirement Keys column in Excel imports.</div>'}
+      <p class="muted panel-foot">Coverage uses each linked test case's latest result in any cycle. Link test cases to requirements on the test case's Edit screen.</p></section>`;
+}
+
+function openRequirement(requirementId) {
+  const r = state.coverage.requirements.find((item) => item.id === requirementId);
+  if (!r) return;
+  openDrawer(`${r.key} · ${r.title}`, `${esc(r.type || "Requirement")} · ${esc(r.priority || "—")} priority · ${esc(r.coverage)}`,
+    `${r.description ? `<p class="prewrap">${esc(r.description)}</p>` : ""}<h3 class="confirm-subhead">Test cases (${r.cases.length})</h3>
+     ${r.cases.length ? `<ul class="failure-list">${r.cases.map((c) => `<li><button class="link case-key" onclick="closeDrawer(); viewCase(${jsArg(c.id)})">${esc(c.case_key)}</button> ${status(c.latest)} <div>${esc(plainTitle({ case_key: c.case_key, title: c.title }))}</div></li>`).join("")}</ul>` : '<p class="muted">No test case covers this requirement yet.</p>'}`);
 }
 
 async function rebuildIndex() {

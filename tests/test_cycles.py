@@ -112,8 +112,8 @@ class CycleTests(unittest.TestCase):
     def test_plan_is_optional_and_linked_when_chosen(self):
         plan = self.store.create("test_plans", {"project_id": self.project["id"], "name": "Release 2.5"})
         cycle = self.admin.call("POST", "/api/cycles", {**self.info(plan_id=plan["id"]), "module_ids": [self.enrollment["id"]]})[1]["cycle"]
-        suite = self.store.get("test_suites", cycle["suite_id"])
-        self.assertEqual(suite["plan_id"], plan["id"])
+        self.assertEqual(cycle["plan_id"], plan["id"])
+        self.assertEqual(cycle["suite_id"], "")  # no hidden link rows any more
 
     # ---------------------------------------------------------------- duplicates
     def test_a_case_appears_once_per_cycle(self):

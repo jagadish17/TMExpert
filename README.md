@@ -230,6 +230,38 @@ Rules:
 - Admins can switch My Work to everyone, a person, or unassigned work.
 - Test cases also have an **Attachments** tab in the repository.
 
+## Releases: plans, suites, defects and coverage
+
+The full workflow is Repository → Test Suites → Test Plan → Cycles → Execution →
+Defects → Retest → Readiness. The design and gap analysis are in
+`docs/QA_PLATFORM_AUDIT.md`.
+
+- **Test Plans** are the release or sprint. Each cycle belongs to one plan
+  (`Test_Cycles.plan_id`). Existing cycles were linked to their plan automatically
+  on first start, from the old hidden suite rows; nothing was deleted.
+- A plan shows every cycle, its testers and modules, the **effective result** of
+  each test case (the latest executed result across the plan's cycles), open
+  defects by severity, and a **readiness verdict** (Ready / Not ready / Not
+  started) checked against the plan's **exit criteria**: execution %, pass rate,
+  open Critical / High defects, and blocked cases. Admins edit the criteria per
+  plan. **Export Excel** downloads the plan report.
+- **Test Suites** are reusable selections of modules and/or test cases. Build one
+  with the same picker as a cycle (or **Save as suite** from the cycle wizard),
+  then add it to any new cycle with **+ Add a saved suite…**. Test cases are never
+  copied: each cycle keeps its own execution record, pinned to the case version.
+- **Defects** (`Defects.xlsx`, keys like `LMS-DEF-0001`) can be logged straight
+  from a failed or blocked execution, or linked to an existing one. A Jira key and
+  link can be stored as the external reference. Free-text references typed in
+  earlier executions are listed as *unregistered* and can be registered in one click.
+  Marking a defect **Fixed** records the time; it then shows **Awaiting retest**
+  until an affected case is executed again, then **Retest passed** or
+  **Retest failed**, and can be **Verified** and **Closed**.
+- **Retest** on a cycle (or a defect) creates a Retesting cycle in the same plan
+  with the failed / blocked cases, keeping the original testers.
+- **Requirements** shows coverage per requirement: Passing, Failing, Partly
+  tested, Not run, or Not covered. Test cases link to requirements and store an
+  automation status and reference; changing these does not create a new version.
+
 ## Comparing cycles
 
 **Compare Cycles** shows how every test case behaved across testing cycles.
@@ -325,7 +357,9 @@ Implemented: sign-in and roles; master repository with modules, versions,
 approvals, duplicate detection and attachments; Excel import preview, validation,
 history and compatible export; test cycles with snapshots; module and individual
 assignment with a drag-and-drop board; My Work and execution with evidence and full
-history; cycle comparison; dashboard and Excel reports; tamper-evident audit log.
+history; cycle comparison; dashboard and Excel reports; tamper-evident audit log;
+test plans with exit criteria and release readiness; reusable test suites;
+defect lifecycle with retest tracking; requirement coverage.
 
 Known limits:
 - Excel workbooks are the database, so each save rewrites the workbook it changes.

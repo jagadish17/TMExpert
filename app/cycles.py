@@ -11,7 +11,7 @@ import re
 from datetime import date
 from typing import Any
 
-from .storage import ExcelStorageService
+from .storage import ExcelStorageService, utcnow
 from .workflow import RepositoryWorkflow
 
 TESTING_TYPES = ("Regression", "Sanity", "Smoke", "Functional", "Retesting", "Integration", "UAT", "Custom")
@@ -75,6 +75,13 @@ class CycleService:
         folders = self._folders(project_id)
         module_ids = _ids(selection.get("module_ids"))
         include_ids = _ids(selection.get("include_case_ids"))
+        suite_ids = _ids(selection.get("suite_ids"))
+        for suite_id in suite_ids:  # a reusable suite contributes its modules and hand-picked cases
+            suite = self.store.get("test_suites", suite_id, include_archived=False)
+            if not suite or suite.get("project_id") != project_id or suite.get("kind") != "reusable":
+                raise ValueError("One or more selected suites no longer exist")
+            module_ids += [m for m in _ids(suite.get("module_ids") or []) if m in folders and m not in module_ids]
+            include_ids += [c for c in _ids(suite.get("case_ids") or []) if c not in include_ids]
         exclude_ids = set(_ids(selection.get("exclude_case_ids")))
         unknown = [m for m in module_ids if m not in folders]
         if unknown: raise ValueError("One or more selected modules no longer exist")
@@ -97,7 +104,7 @@ class CycleService:
             if reason:
                 skipped.append({"id": case_id, "case_key": case.get("case_key", ""), "title": case.get("title", ""), "reason": reason}); continue
             chosen.append(case); seen.add(case_id)
-        return {"cases": chosen, "skipped": skipped, "rule_excluded": rule_excluded, "module_ids": module_ids, "folders": folders}
+        return {"cases": chosen, "skipped": skipped, "rule_excluded": rule_excluded, "module_ids": module_ids, "folders": folders, "suite_ids": suite_ids}
 
     def _preview_rows(self, cases: list[dict[str, Any]], folders: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
         return [{"id": c["id"], "case_key": c.get("case_key", ""), "title": c.get("title", ""), "priority": c.get("priority", ""),
@@ -156,13 +163,12 @@ class CycleService:
         info = self._validate_info(data, project_id)
         resolved = self.resolve(project_id, data)
         if not resolved["cases"]: raise ValueError("Select at least one eligible test case for the cycle")
-        suite_id = ""
-        plan_id = str(data.get("plan_id", "") or "")
-        if plan_id:
-            plan = self.store.get("test_plans", plan_id, include_archived=False)
-            if not plan or plan.get("project_id") != project_id: raise ValueError("Choose a test plan in this project")
-            suite_id = self.store.create("test_suites", {"project_id": project_id, "plan_id": plan_id, "name": f"{info['name']} suite", "description": "", "owner_id": actor_id if self.store.get("users", actor_id) else "", "status": "Active"}, actor_id)["id"]
-        cycle = self.store.create("test_cycles", {**info, "project_id": project_id, "suite_id": suite_id, "status": "Not Started",
+        plan_id = self._check_plan(project_id, data.get("plan_id"))
+        source_cycle_id = str(data.get("source_cycle_id", "") or "")
+        if source_cycle_id and (self.store.get("test_cycles", source_cycle_id) or {}).get("project_id") != project_id:
+            raise ValueError("The source cycle must be in this project")
+        cycle = self.store.create("test_cycles", {**info, "project_id": project_id, "suite_id": "", "plan_id": plan_id, "source_cycle_id": source_cycle_id,
+                                                  "suite_ids": resolved["suite_ids"] or self._suite_refs(project_id, data.get("suite_refs")), "status": "Not Started",
                                                   "owner_id": actor_id if self.store.get("users", actor_id) else "", "module_ids": resolved["module_ids"]}, actor_id)
         try:
             runs = self.store.batch_create("test_runs", self._run_rows(cycle, resolved["cases"], resolved["folders"]), actor_id)
@@ -197,10 +203,62 @@ class CycleService:
         if "testing_type" not in data and cycle.get("testing_type") not in TESTING_TYPES:
             merged["testing_type"], merged["custom_type"] = "Custom", cycle.get("testing_type", "")
         changes = self._validate_info(merged, cycle["project_id"], cycle_id)
+        if "plan_id" in data: changes["plan_id"] = self._check_plan(cycle["project_id"], data.get("plan_id"))
         if "status" in data:
             if data["status"] not in CYCLE_STATUSES: raise ValueError("Cycle status must be Not Started, In Progress, or Completed")
             changes["status"] = data["status"]
         return self.store.update("test_cycles", cycle_id, changes, actor_id)
+
+    def _suite_refs(self, project_id: str, refs: Any) -> list[str]:
+        """Suites a selection was pre-filled from (recorded for traceability only)."""
+        try: ids = _ids(refs)
+        except ValueError: return []
+        return [i for i in ids if (self.store.get("test_suites", i) or {}).get("project_id") == project_id]
+    def _check_plan(self, project_id: str, plan_id: Any) -> str:
+        plan_id = str(plan_id or "")
+        if not plan_id: return ""
+        plan = self.store.get("test_plans", plan_id, include_archived=False)
+        if not plan or plan.get("project_id") != project_id: raise ValueError("Choose a test plan in this project")
+        return plan_id
+
+    # ----------------------------------------------------------------- retest
+    def _unique_name(self, project_id: str, base: str) -> str:
+        taken = {c["name"].casefold() for c in self.store.list("test_cycles", filters={"project_id": project_id}, page_size=1_000_000, include_archived=True)["items"]}
+        name, n = base[:150], 2
+        while name.casefold() in taken: name = f"{base[:140]} ({n})"; n += 1
+        return name
+
+    def create_retest(self, project_id: str, source_runs: list[dict[str, Any]], data: dict[str, Any], actor_id: str, source_cycle: dict[str, Any] | None = None) -> dict[str, Any]:
+        """A Retesting cycle for the given executions; each case keeps its tester."""
+        if not source_runs: raise ValueError("There are no failed or blocked test cases to retest")
+        base = source_cycle or {}
+        name = str(data.get("name") or "").strip() or self._unique_name(project_id, f"{base.get('name') or 'Defect'} – Retest")
+        info = {"project_id": project_id, "name": name, "testing_type": "Retesting", "description": str(data.get("description") or (f"Retest of {base['name']}" if base else "Retest after defect fixes")),
+                "environment": str(data.get("environment", base.get("environment", "")) or ""), "build": str(data.get("build", base.get("build", "")) or ""),
+                "start_date": str(data.get("start_date") or ""), "target_date": str(data.get("target_date") or ""),
+                "plan_id": data.get("plan_id", base.get("plan_id", "")), "source_cycle_id": base.get("id", ""),
+                "include_case_ids": list(dict.fromkeys(r["test_case_id"] for r in source_runs)), "include_unapproved": data.get("include_unapproved") is True}
+        result = self.create_cycle(info, actor_id)
+        previous = {r["test_case_id"]: r.get("assignee_id", "") for r in source_runs if r.get("assignee_id")}
+        new_runs = self.store.list("test_runs", filters={"cycle_id": result["cycle"]["id"]}, page_size=1_000_000)["items"]
+        now = utcnow()
+        keep = {r["id"]: {"assignee_id": previous[r["test_case_id"]], "assignment_source": "manual", "assigned_at": now, "assigned_by": actor_id if self.store.get("users", actor_id) else ""}
+                for r in new_runs if r["test_case_id"] in previous and self.store.get("users", previous[r["test_case_id"]], include_archived=False)}
+        if keep:
+            self.store.bulk_update("test_runs", keep, actor_id, action="Assign")
+            self.store.batch_create("assignment_history", [{"project_id": project_id, "cycle_id": result["cycle"]["id"], "test_run_id": rid, "case_key": next(r for r in new_runs if r["id"] == rid).get("case_key", ""),
+                                                             "module_path": next(r for r in new_runs if r["id"] == rid).get("module_path", ""), "from_assignee_id": "", "to_assignee_id": change["assignee_id"],
+                                                             "source": "manual", "reason": "Kept from the original execution", "actor_id": actor_id, "created_at": now} for rid, change in keep.items()], actor_id)
+        return {**result, "assigned": len(keep)}
+
+    def retest_cycle(self, cycle_id: str, data: dict[str, Any], actor_id: str) -> dict[str, Any]:
+        cycle = self.store.get("test_cycles", cycle_id, include_archived=False)
+        if not cycle: raise KeyError("Cycle not found")
+        statuses = [s for s in (data.get("statuses") or ["Failed", "Blocked"]) if s in RUN_STATUSES]
+        runs = [r for r in self.store.list("test_runs", filters={"cycle_id": cycle_id}, page_size=1_000_000)["items"] if (r.get("status") or "Not Run") in statuses]
+        if data.get("run_ids"): runs = [r for r in runs if r["id"] in set(_ids(data["run_ids"]))]
+        if not runs: raise ValueError(f"This cycle has no {' or '.join(s.lower() for s in statuses)} test cases to retest")
+        return self.create_retest(cycle["project_id"], runs, data, actor_id, cycle)
 
     # ---------------------------------------------------------------- summary
     def summary(self, cycle_id: str) -> dict[str, Any]:

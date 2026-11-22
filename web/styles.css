@@ -856,3 +856,47 @@ button.mtree-toggle:hover { background: #eef3fa; color: var(--blue); }
 .repo-v2 .mtree-node { gap: 6px; padding: 0 6px; }
 .mod-badge { padding: 0 5px; font-size: 10px; letter-spacing: 0; text-transform: none; line-height: 16px; }
 .mtree-count.zero { display: none; }
+
+/* Plans, readiness, suites, defects, requirements */
+.plans-table td { vertical-align: middle; }
+.plans-table .type-pill, .repo-head h1 .type-pill { margin-left: 8px; vertical-align: middle; }
+.repo-head h1 .badge { vertical-align: middle; font-size: 12px; }
+.num { text-align: right; }
+.plan-progress { min-width: 180px; }
+.plan-progress small { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }
+.badge.verdict { font-size: 12px; }
+.plan-scope { margin-bottom: 14px; padding: 12px 16px; }
+.plan-scope p { margin: 4px 0 0; }
+.plan-top { display: grid; grid-template-columns: minmax(300px, 2fr) minmax(0, 3fr); gap: 14px; align-items: stretch; }
+.readiness { padding: 14px 16px; border-left: 5px solid #b8c4d2; }
+.readiness.ready { border-left-color: #1f8a5c; }
+.readiness.not-ready { border-left-color: #c4384a; }
+.readiness-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.readiness-head .detail-label { display: block; }
+.verdict-text { font-size: 22px; }
+.readiness.ready .verdict-text { color: #127451; }
+.readiness.not-ready .verdict-text { color: #ad2a3b; }
+.criteria-table { width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 13px; }
+.criteria-table td { padding: 6px 4px; border-top: 1px solid #eef1f5; }
+.check { display: inline-grid; width: 20px; height: 20px; place-items: center; border-radius: 50%; font-size: 12px; font-weight: 700; }
+.check.ok { background: #e6f6ef; color: #127451; }
+.check.no { background: #fff0f1; color: #ad2a3b; }
+.panel-foot { margin: 10px 0 0; font-size: 12px; }
+.section-gap { margin-top: 14px; }
+fieldset.criteria, fieldset.req-picker { margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
+fieldset.criteria legend, fieldset.req-picker legend { padding: 0 4px; color: #53657b; font-size: 12px; font-weight: 700; }
+.criterion { display: grid; grid-template-columns: 1fr auto 70px auto; align-items: center; gap: 6px; padding: 4px 0; font-size: 13px; }
+.criterion input { width: 70px; padding: 4px 6px; border: 1px solid #dce3ec; border-radius: 5px; }
+.check-row { display: flex; gap: 16px; padding: 4px 0; }
+.check-row label { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; }
+.notice-panel { margin-bottom: 14px; padding: 12px 16px; border-left: 4px solid #c98a12; font-size: 13px; }
+.ref-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.ref { padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: #fbfcfd; }
+.retest { font-size: 12px; font-weight: 650; color: #8a5200; }
+.retest.ok { color: #127451; } .retest.no { color: #ad2a3b; }
+.defect-actions { display: flex; gap: 14px; margin-top: 4px; font-size: 13px; }
+.req-filter { height: 26px; margin-left: 8px; padding: 0 8px; border: 1px solid #dce3ec; border-radius: 5px; font-size: 12px; font-weight: 400; }
+.req-options { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 2px 14px; max-height: 190px; overflow: auto; margin: 6px 0; }
+.req-option { display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 13px; }
+.req-option[hidden] { display: none; }
+@media (max-width: 1100px) { .plan-top { grid-template-columns: 1fr; } }

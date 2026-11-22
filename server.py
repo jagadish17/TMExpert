@@ -11,6 +11,8 @@ from app.attachments import AttachmentService
 from app.execution import ExecutionService, StaleExecution
 from app.comparison import ComparisonService
 from app.reports import ReportService
+from app.defects import DefectService
+from app.planning import PlanningService
 from app.audit_log import AuditLogService
 from app.auth import AuthService, PermissionDenied, canonical_role, has_permission, public_user, ROLE_PERMISSIONS, ADMIN
 
@@ -51,6 +53,8 @@ class App:
         self.attachments = AttachmentService(self.store)
         self.execution = ExecutionService(self.store, self.service, self.attachments)
         self.comparison = ComparisonService(self.store)
+        self.defects = DefectService(self.store, self.cycles)
+        self.planning = PlanningService(self.store, self.cycles, self.defects)
         self.reports = ReportService(self.store, self.service.workflow)
         self.audit_log = AuditLogService(self.store)
 
@@ -65,8 +69,7 @@ READ_PERMISSIONS = {
     "defects": "execution.read", "audit": "audit.read",
 }
 CREATE_PERMISSIONS = {
-    "requirements": "requirements.write", "test_plans": "plans.write",
-    "test_suites": "plans.write", "test_cycles": "cycles.write", "defects": "execution.update",
+    "requirements": "requirements.write",
 }
 UPDATE_PERMISSIONS = {
     "projects": "projects.write", "test_cases": "repository.write", "requirements": "requirements.write",
@@ -272,6 +275,27 @@ class Handler(SimpleHTTPRequestHandler):
             data = self.app.comparison.compare(query.get("project_id", ""), ids, query.get("previous_id", ""), query.get("current_id", ""))
             if route == "/api/comparison": return self._json(200, data)
             return self._download(self.app.comparison.export_xlsx(data, store.root / "temp"), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "TMExpert_Cycle_Comparison.xlsx")
+        planning, defects = self.app.planning, self.app.defects
+        if route == "/api/plans":
+            self._require(user, "plans.read"); return self._json(200, {"items": planning.list_plans(query.get("project_id", ""))})
+        if len(parts) == 3 and parts[0] == "plans" and parts[2] == "report":
+            self._require(user, "plans.read"); return self._json(200, planning.plan_report(parts[1]))
+        if len(parts) == 3 and parts[0] == "plans" and parts[2] == "export.xlsx":
+            self._require(user, "reports.export")
+            blob, filename = planning.export_plan(parts[1], store.root / "temp")
+            return self._download(blob, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", filename)
+        if route == "/api/suites":
+            self._require(user, "plans.read"); return self._json(200, {"items": planning.list_suites(query.get("project_id", ""))})
+        if route == "/api/requirements/coverage":
+            self._require(user, "requirements.read"); return self._json(200, planning.coverage(query.get("project_id", "")))
+        if route == "/api/defects":
+            self._require(user, "execution.read")
+            return self._json(200, defects.list(query.get("project_id", ""), {k: query.get(k, "") for k in ("status", "severity", "q")}))
+        if len(parts) == 2 and parts[0] == "defects":
+            self._require(user, "execution.read")
+            defect = store.get("defects", parts[1])
+            if not defect: raise KeyError("Defect not found")
+            return self._json(200, defects.describe(defect))
         if route in {"/api/audit-log", "/api/audit-log/verify", "/api/audit-log/export.xlsx"}:
             self._require(user, "audit.read")
             if route.endswith("/verify"): return self._json(200, store.verify_audit())
@@ -398,6 +422,27 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(200, workflow.transition_folder(parts[1], target, body.get("comment"), actor))
         if route == "/api/folders":
             self._require(user, "repository.write"); return self._json(201, workflow.create_folder(self._body(), actor))
+        planning, defects = self.app.planning, self.app.defects
+        if route == "/api/plans":
+            self._require(user, "plans.write"); return self._json(201, planning.create_plan(self._body(), actor))
+        if route == "/api/suites":
+            self._require(user, "plans.write"); return self._json(201, planning.create_suite(self._body(), actor))
+        if len(parts) == 3 and parts[0] == "cycles" and parts[2] == "retest":
+            self._require(user, "cycles.write"); return self._json(201, self.app.cycles.retest_cycle(parts[1], self._body(), actor))
+        if route == "/api/defects":
+            self._require(user, "execution.update"); body = self._body()
+            run_id = str(body.get("run_id", "") or "")
+            if run_id: self._require_run_owner(user, run_id)
+            return self._json(201, defects.create(str(body.get("project_id", "")), body, actor, run_id))
+        if route == "/api/defects/register":
+            self._require(user, "execution.update"); body = self._body()
+            return self._json(201, defects.register(str(body.get("project_id", "")), body.get("reference"), actor))
+        if len(parts) == 3 and parts[0] == "defects" and parts[2] == "link":
+            self._require(user, "execution.update"); body = self._body()
+            self._require_run_owner(user, str(body.get("run_id", "")))
+            return self._json(200, defects.link(str(body.get("run_id", "")), parts[1], actor))
+        if len(parts) == 3 and parts[0] == "defects" and parts[2] == "retest":
+            self._require(user, "cycles.write"); return self._json(201, defects.retest(parts[1], self._body(), actor))
         if len(parts) == 3 and parts[0] == "test-runs" and parts[2] == "execute":
             self._require(user, "execution.update"); self._require_run_owner(user, parts[1])
             return self._json(200, self.app.execution.execute(parts[1], self._body(), actor))
@@ -496,6 +541,9 @@ class Handler(SimpleHTTPRequestHandler):
             body.pop("allow_duplicate", None)
             return self._json(200, service.update_test_case(record_id, body, actor, body.pop("version_comment", "Updated")))
         if entity == "test_cycles": return self._json(200, self.app.cycles.update_cycle(record_id, body, actor))
+        if entity == "test_plans": return self._json(200, self.app.planning.update_plan(record_id, body, actor))
+        if entity == "test_suites": return self._json(200, self.app.planning.update_suite(record_id, body, actor))
+        if entity == "defects": return self._json(200, self.app.defects.update(record_id, body, actor))
         return self._json(200, store.update(entity, record_id, body, actor))
 
     # ----------------------------------------------------------------- DELETE

@@ -216,11 +216,22 @@ class TMExpertService:
         if "folder_id" in changes:
             folder = self.store.get("folders", str(changes["folder_id"]), include_archived=False)
             if not folder or folder.get("project_id") != existing.get("project_id"): raise ValueError("Choose a module in this project")
+        # Requirement links and automation details are metadata: they never create a version or reset approval.
+        metadata = {k: changes.pop(k) for k in list(changes) if k in {"requirement_ids", "automation_status", "automation_reference"}}
+        if "requirement_ids" in metadata:
+            ids = metadata["requirement_ids"] if isinstance(metadata["requirement_ids"], list) else []
+            metadata["requirement_ids"] = [str(i) for i in dict.fromkeys(ids) if str(i)]
+        if "automation_status" in metadata and metadata["automation_status"] not in {"Not Automated", "Automated", "In Progress", "Not Applicable"}:
+            raise ValueError("Automation status must be Not Automated, In Progress, Automated, or Not Applicable")
+        if "automation_reference" in metadata: metadata["automation_reference"] = str(metadata["automation_reference"] or "").strip()[:300]
+        metadata = {k: v for k, v in metadata.items() if existing.get(k) != v}
         step_key = lambda items: [(str(s.get("action", "")).strip(), str(s.get("expected_result", "")).strip(), str(s.get("test_data", "")).strip()) for s in items]
         field_changes = {k: v for k, v in changes.items() if existing.get(k) != v}
         steps_changed = step_key(steps) != step_key(current_steps)
+        if metadata:  # saved only after all validation above has passed
+            existing = self.store.update("test_cases", record_id, metadata, actor_id)
         if not field_changes and not steps_changed:
-            return existing  # nothing changed: no new version, approval untouched
+            return existing  # no content change: no new version, approval untouched
         next_version = str(int(existing.get("version", "0") or 0) + 1)
         field_changes["version"] = next_version
         if existing.get("status") in {"Approved", "Rejected"}:
